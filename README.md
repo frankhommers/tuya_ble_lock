@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="custom_components/tuya_ble_lock/icon@2x.png" width="128" height="128" alt="Tuya BLE Lock icon">
+  <img src="logo.png" width="128" height="128" alt="Tuya BLE Lock icon">
 </p>
 
 <h1 align="center">Tuya BLE Lock</h1>
