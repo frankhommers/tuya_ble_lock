@@ -10,9 +10,9 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .entity import TuyaBLELockEntity
 from .models import TuyaBLELockData
 
-# (config_entry data key, sensor name suffix, unique_id suffix)
+# (device_data key, sensor name suffix, unique_id suffix)
 _DIAG_KEYS = [
-    ("device_uuid", "UUID", "uuid"),
+    ("uuid", "UUID", "uuid"),
     ("login_key", "Login key", "login_key"),
     ("virtual_id", "Virtual ID", "virtual_id"),
     ("auth_key", "Auth key", "auth_key"),
@@ -21,15 +21,18 @@ _DIAG_KEYS = [
 
 async def async_setup_entry(hass, entry, async_add_entities):
     data: TuyaBLELockData = entry.runtime_data
-    profile = data.profile or {}
-    entities_cfg = profile.get("entities", {})
-
     entities = []
-    if "battery_sensor" in entities_cfg:
-        entities.append(TuyaBLEBatterySensor(data.coordinator, entry))
-    for conf_key, name, uid_suffix in _DIAG_KEYS:
-        entities.append(TuyaBLEDiagnosticSensor(data.coordinator, entry, conf_key, name, uid_suffix))
-    async_add_entities(entities)
+    for mac, coordinator in data.coordinators.items():
+        profile = coordinator.profile or {}
+        entities_cfg = profile.get("entities", {})
+        if "battery_sensor" in entities_cfg:
+            entities.append(TuyaBLEBatterySensor(coordinator, entry))
+        for data_key, name, uid_suffix in _DIAG_KEYS:
+            entities.append(TuyaBLEDiagnosticSensor(
+                coordinator, entry, data_key, name, uid_suffix,
+            ))
+    if entities:
+        async_add_entities(entities)
 
 
 BATTERY_STATE_TO_PERCENT = {
@@ -55,7 +58,6 @@ class TuyaBLEBatterySensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
         pct = self.coordinator.state.get("battery_percent")
         if pct is not None:
             return pct
-        # Fall back to battery_state enum → approximate percentage
         state = self.coordinator.state.get("battery_state")
         if state:
             return BATTERY_STATE_TO_PERCENT.get(state)
@@ -73,15 +75,15 @@ class TuyaBLEBatterySensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
 
 
 class TuyaBLEDiagnosticSensor(TuyaBLELockEntity, SensorEntity):
-    """Exposes config entry secrets as diagnostic sensors for CLI/API access."""
+    """Exposes per-device secrets as diagnostic sensors for CLI/API access."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, coordinator, entry, conf_key: str, name: str, uid_suffix: str):
+    def __init__(self, coordinator, entry, data_key: str, name: str, uid_suffix: str):
         self._attr_name = name
         self._uid_suffix = uid_suffix
         super().__init__(coordinator, entry)
-        self._conf_key = conf_key
+        self._data_key = data_key
 
     @property
     def unique_id(self):
@@ -89,9 +91,8 @@ class TuyaBLEDiagnosticSensor(TuyaBLELockEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        # Diagnostic sensors read from config_entry data, not BLE — always available.
         return True
 
     @property
     def native_value(self) -> str | None:
-        return self._entry.data.get(self._conf_key)
+        return self.coordinator.device_data.get(self._data_key)

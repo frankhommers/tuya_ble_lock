@@ -15,26 +15,23 @@ class TuyaBLELockEntity(CoordinatorEntity):
     def __init__(self, coordinator, entry):
         super().__init__(coordinator)
         self._entry = entry
-        self._mac = entry.data["device_mac"]
+        self._mac = coordinator.mac
 
     @property
     def device_info(self) -> DeviceInfo:
         model = "BLE Smart Lock"
-        rd = getattr(self._entry, "runtime_data", None)
-        if rd and hasattr(rd, "profile") and rd.profile:
-            model = rd.profile.get("model", model)
+        profile = self.coordinator.profile
+        if profile:
+            model = profile.get("model", model)
         return DeviceInfo(
             identifiers={(DOMAIN, self._mac)},
-            name=self._entry.title,
+            name=self.coordinator.device_name,
             manufacturer="Tuya",
             model=model,
             connections={(CONNECTION_BLUETOOTH, self._mac)},
+            via_device=(DOMAIN, self._entry.entry_id),
         )
 
     @property
     def available(self) -> bool:
-        # Default CoordinatorEntity marks unavailable only when the last
-        # coordinator update failed (UpdateFailed).  Between successful polls
-        # entities stay available and show their last known values — even if
-        # the BLE link is currently down (locks sleep between ads).
         return super().available

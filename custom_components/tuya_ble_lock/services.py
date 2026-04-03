@@ -82,48 +82,55 @@ def _resolve_member_name(hass: HomeAssistant, call_data: dict) -> str:
         if state:
             return state.name
         return person_entity_id.split(".")[-1].replace("_", " ").title()
-    # Fall back to legacy member_name field
     name = call_data.get("member_name")
     if name:
         return name
     return "Member"
 
 
-def _get_entry_and_data(hass: HomeAssistant, device_id: str) -> tuple:
-    """Resolve device_id to config entry and runtime data.
+def _get_coordinator(hass: HomeAssistant, device_id: str):
+    """Resolve device_id to (mac, coordinator).
 
-    Accepts config entry_id, unique_id, or HA device registry ID.
+    Accepts MAC address, HA device registry ID, or config entry ID.
     """
+    # Check all coordinators by MAC
     for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.entry_id == device_id or entry.unique_id == device_id:
-            return entry, entry.runtime_data
-    # Try device registry lookup (user may pass the HA device ID from the UI)
+        rd: TuyaBLELockData | None = getattr(entry, "runtime_data", None)
+        if not rd or not rd.coordinators:
+            continue
+        # Direct MAC match
+        mac_upper = device_id.upper()
+        if mac_upper in rd.coordinators:
+            return mac_upper, rd.coordinators[mac_upper]
+
+    # Try device registry lookup
     from homeassistant.helpers import device_registry as dr
     registry = dr.async_get(hass)
     device = registry.async_get(device_id)
     if device:
-        for entry_id in device.config_entries:
-            entry = hass.config_entries.async_get_entry(entry_id)
-            if entry and entry.domain == DOMAIN:
-                return entry, entry.runtime_data
+        for ident in device.identifiers:
+            if ident[0] == DOMAIN:
+                mac = ident[1]
+                for entry in hass.config_entries.async_entries(DOMAIN):
+                    rd = getattr(entry, "runtime_data", None)
+                    if rd and mac in rd.coordinators:
+                        return mac, rd.coordinators[mac]
+
     raise HomeAssistantError(
-        f"Device entry not found for '{device_id}'. "
-        f"Use config entry ID, unique ID, or HA device ID."
+        f"Device not found: '{device_id}'. Use MAC address or HA device ID."
     )
 
 
-def _get_service_dp(data: TuyaBLELockData, service_name: str) -> int | None:
-    """Look up the DP ID for a service from the device profile."""
-    profile = data.profile or {}
+def _get_service_dp(coordinator, service_name: str) -> int | None:
+    profile = coordinator.profile or {}
     svc_cfg = profile.get("services", {}).get(service_name)
     if svc_cfg:
         return svc_cfg.get("dp")
     return None
 
 
-def _get_sync_dp(data: TuyaBLELockData, service_name: str) -> int | None:
-    """Look up the sync DP ID for a service (used before biometric enrollment)."""
-    profile = data.profile or {}
+def _get_sync_dp(coordinator, service_name: str) -> int | None:
+    profile = coordinator.profile or {}
     svc_cfg = profile.get("services", {}).get(service_name)
     if svc_cfg:
         return svc_cfg.get("sync_dp")
@@ -149,11 +156,10 @@ async def async_register_services(hass: HomeAssistant) -> None:
         if not isinstance(device_ids, list):
             device_ids = [device_ids]
         for device_id in device_ids:
-            entry, data = _get_entry_and_data(hass, device_id)
-            dp_create = _get_service_dp(data, "add_pin")
+            mac, coordinator = _get_coordinator(hass, device_id)
+            dp_create = _get_service_dp(coordinator, "add_pin")
             if dp_create is None:
                 raise HomeAssistantError("add_pin service not supported by this device profile")
-            coordinator = data.coordinator
             try:
                 await coordinator._async_ensure_connected()
                 pin_bytes = [int(d) for d in pin_code]
@@ -168,7 +174,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
                     if resp.get("stage") == "COMPLETE" and resp.get("result") == "OK":
                         await store.async_add_credential(
                             member_id=member.member_id,
-                            lock_entry_id=entry.entry_id,
+                            lock_entry_id=mac,
                             cred_type=CRED_PASSWORD,
                             hw_id=resp.get("hw_id", 0),
                             name=f"{member_name} PIN",
@@ -190,16 +196,14 @@ async def async_register_services(hass: HomeAssistant) -> None:
         if not member:
             member = await store.async_add_member(member_name)
 
-        entry, data = _get_entry_and_data(hass, device_id)
-        dp_create = _get_service_dp(data, "add_fingerprint")
+        mac, coordinator = _get_coordinator(hass, device_id)
+        dp_create = _get_service_dp(coordinator, "add_fingerprint")
         if dp_create is None:
             raise HomeAssistantError("add_fingerprint service not supported by this device profile")
-        sync_dp = _get_sync_dp(data, "add_fingerprint")
-        coordinator = data.coordinator
+        sync_dp = _get_sync_dp(coordinator, "add_fingerprint")
         try:
             await coordinator._async_ensure_connected()
 
-            # Send sync marker before biometric enrollment
             if sync_dp:
                 await coordinator._session.async_send_dp_raw(sync_dp, SYNC_MARKER)
 
@@ -208,14 +212,13 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 dp_create, payload, timeout=60.0
             )
 
-            # Find the completion report
             for dp in results:
                 if dp["id"] == dp_create and dp["type"] == 0 and len(dp["raw"]) >= 7:
                     resp = parse_enroll_response(dp["raw"])
                     if resp.get("stage") == "COMPLETE" and resp.get("result") == "OK":
                         await store.async_add_credential(
                             member_id=member.member_id,
-                            lock_entry_id=entry.entry_id,
+                            lock_entry_id=mac,
                             cred_type=CRED_FINGERPRINT,
                             hw_id=resp.get("hw_id", 0),
                             name=f"{member_name} Fingerprint",
@@ -238,16 +241,14 @@ async def async_register_services(hass: HomeAssistant) -> None:
         if not member:
             member = await store.async_add_member(member_name)
 
-        entry, data = _get_entry_and_data(hass, device_id)
-        dp_create = _get_service_dp(data, "add_card")
+        mac, coordinator = _get_coordinator(hass, device_id)
+        dp_create = _get_service_dp(coordinator, "add_card")
         if dp_create is None:
             raise HomeAssistantError("add_card service not supported by this device profile")
-        sync_dp = _get_sync_dp(data, "add_card")
-        coordinator = data.coordinator
+        sync_dp = _get_sync_dp(coordinator, "add_card")
         try:
             await coordinator._async_ensure_connected()
 
-            # Send sync marker before biometric enrollment
             if sync_dp:
                 await coordinator._session.async_send_dp_raw(sync_dp, SYNC_MARKER)
 
@@ -262,7 +263,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
                     if resp.get("stage") == "COMPLETE" and resp.get("result") == "OK":
                         await store.async_add_credential(
                             member_id=member.member_id,
-                            lock_entry_id=entry.entry_id,
+                            lock_entry_id=mac,
                             cred_type=CRED_CARD,
                             hw_id=resp.get("hw_id", 0),
                             name=f"{member_name} Card",
@@ -280,20 +281,17 @@ async def async_register_services(hass: HomeAssistant) -> None:
         credential_id = call.data.get("credential_id")
 
         store: CredentialStore = hass.data[DOMAIN]["credential_store"]
-        entry, data = _get_entry_and_data(hass, device_id)
-        dp_delete = _get_service_dp(data, "delete_credential")
+        mac, coordinator = _get_coordinator(hass, device_id)
+        dp_delete = _get_service_dp(coordinator, "delete_credential")
         if dp_delete is None:
             raise HomeAssistantError("delete_credential service not supported by this device profile")
 
-        # Find credentials to delete
         if credential_id:
-            # Direct credential ID lookup
             cred_data = store._data["credentials"].get(credential_id)
             if not cred_data:
                 raise HomeAssistantError(f"Credential '{credential_id}' not found")
             creds_to_delete = [(credential_id, cred_data)]
         else:
-            # Look up by person/member_name + optional cred_type
             member_name = _resolve_member_name(hass, call.data)
             member = store.get_member_by_name(member_name)
             if not member:
@@ -306,7 +304,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
             creds_to_delete = [
                 (cid, c) for cid, c in store._data["credentials"].items()
                 if c["member_id"] == member.member_id
-                and c["lock_entry_id"] == entry.entry_id
+                and c["lock_entry_id"] == mac
                 and (cred_type_filter is None or c["cred_type"] == cred_type_filter)
             ]
             if not creds_to_delete:
@@ -315,7 +313,6 @@ async def async_register_services(hass: HomeAssistant) -> None:
                     f"No {ctype} credentials found for '{member_name}' on this lock"
                 )
 
-        coordinator = data.coordinator
         try:
             await coordinator._async_ensure_connected()
 
@@ -343,17 +340,15 @@ async def async_register_services(hass: HomeAssistant) -> None:
         if not pin_code.isdigit() or len(pin_code) < 6:
             raise HomeAssistantError("PIN must be at least 6 digits")
 
-        entry, data = _get_entry_and_data(hass, device_id)
-        dp_temp = _get_service_dp(data, "create_temp_password")
+        mac, coordinator = _get_coordinator(hass, device_id)
+        dp_temp = _get_service_dp(coordinator, "create_temp_password")
         if dp_temp is None:
             raise HomeAssistantError("create_temp_password service not supported by this device profile")
-        coordinator = data.coordinator
         try:
             await coordinator._async_ensure_connected()
 
             store: CredentialStore = hass.data[DOMAIN]["credential_store"]
 
-            # Parse timestamps (ISO format string to epoch)
             from datetime import datetime
             eff_ts = int(datetime.fromisoformat(effective_time).timestamp())
             exp_ts = int(datetime.fromisoformat(expiry_time).timestamp())
@@ -365,7 +360,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
             )
             if result:
                 await store.async_add_temp_password(
-                    lock_entry_id=entry.entry_id,
+                    lock_entry_id=mac,
                     name=name,
                     effective=eff_ts,
                     expiry=exp_ts,
@@ -377,10 +372,10 @@ async def async_register_services(hass: HomeAssistant) -> None:
 
     async def handle_list_credentials(call: ServiceCall):
         device_id = call.data["device_id"]
-        entry, data = _get_entry_and_data(hass, device_id)
+        mac, coordinator = _get_coordinator(hass, device_id)
         store: CredentialStore = hass.data[DOMAIN]["credential_store"]
 
-        creds = store.get_credentials_for_lock(entry.entry_id)
+        creds = store.get_credentials_for_lock(mac)
         members = {m.member_id: m.name for m in store.get_members()}
 
         result = []

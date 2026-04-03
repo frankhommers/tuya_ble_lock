@@ -25,20 +25,35 @@ IDLE_DISCONNECT_SECONDS = 60
 
 
 class TuyaBLELockCoordinator(DataUpdateCoordinator):
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, ble_device, session, profile: dict):
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        mac: str,
+        device_name: str,
+        device_data: dict,
+        ble_device,
+        session,
+        profile: dict,
+    ):
         super().__init__(
             hass,
             _LOGGER,
-            name=f"Tuya BLE Lock {entry.title}",
+            name=f"Tuya BLE Lock {device_name}",
             update_interval=timedelta(hours=12),
         )
         self._entry = entry
+        self._mac = mac
+        self._device_name = device_name
+        self._device_data = device_data
         self._session = session
         self._ble_device = ble_device
         self._op_lock = asyncio.Lock()
         self._profile = profile
         self._idle_timer: asyncio.TimerHandle | None = None
         self._listener_task: asyncio.Task | None = None
+        self._persistent_connection: bool = False
+        self._keepalive_task: asyncio.Task | None = None
 
         # Build state dict from profile's state_map
         self.state: dict[str, Any] = {}
@@ -49,6 +64,18 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
 
         # Register push callback so DP reports update state in real-time
         self._session.set_dp_report_callback(self._process_dp_reports)
+
+    @property
+    def mac(self) -> str:
+        return self._mac
+
+    @property
+    def device_name(self) -> str:
+        return self._device_name
+
+    @property
+    def device_data(self) -> dict:
+        return self._device_data
 
     @property
     def profile(self) -> dict:
@@ -80,10 +107,12 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
         """Reset the idle disconnect timer. Call after every operation."""
         if self._idle_timer is not None:
             self._idle_timer.cancel()
-        loop = self.hass.loop
-        self._idle_timer = loop.call_later(
-            IDLE_DISCONNECT_SECONDS, lambda: asyncio.ensure_future(self._idle_disconnect())
-        )
+            self._idle_timer = None
+        if not self._persistent_connection:
+            loop = self.hass.loop
+            self._idle_timer = loop.call_later(
+                IDLE_DISCONNECT_SECONDS, lambda: asyncio.ensure_future(self._idle_disconnect())
+            )
         # Start background listener if not already running
         self._start_listener()
 
@@ -126,10 +155,63 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
     async def _idle_disconnect(self) -> None:
         """Disconnect after idle timeout."""
         self._idle_timer = None
+        if self._persistent_connection:
+            return  # persistent mode — don't disconnect
         if self._session.is_connected:
             _LOGGER.warning("Idle timeout (%ds), disconnecting BLE", IDLE_DISCONNECT_SECONDS)
             await self._session.async_disconnect()
         # Listener will exit on its own when is_connected becomes False
+
+    @property
+    def persistent_connection(self) -> bool:
+        return self._persistent_connection
+
+    async def async_set_persistent_connection(self, enabled: bool) -> None:
+        """Enable or disable persistent BLE connection."""
+        self._persistent_connection = enabled
+        if enabled:
+            # Cancel any pending idle disconnect
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+                self._idle_timer = None
+            # Start keepalive loop
+            self._start_keepalive()
+        else:
+            # Stop keepalive loop
+            if self._keepalive_task and not self._keepalive_task.done():
+                self._keepalive_task.cancel()
+                self._keepalive_task = None
+            # If connected, start idle timer so it disconnects normally
+            if self._session.is_connected:
+                self._reset_idle_timer()
+
+    def _start_keepalive(self) -> None:
+        """Start the keepalive loop that reconnects when BLE drops."""
+        if self._keepalive_task and not self._keepalive_task.done():
+            return
+        self._keepalive_task = self.hass.async_create_task(self._keepalive_loop())
+
+    async def _keepalive_loop(self) -> None:
+        """Periodically check connection and reconnect if needed."""
+        backoff = 30
+        _LOGGER.info("Persistent connection keepalive started")
+        try:
+            while self._persistent_connection:
+                if not self._session.is_connected:
+                    _LOGGER.info("Persistent connection: reconnecting...")
+                    async with self._op_lock:
+                        try:
+                            await self._async_ensure_connected()
+                            await self._fetch_status()
+                            self._start_listener()
+                            backoff = 30  # reset on success
+                        except Exception as exc:
+                            _LOGGER.debug("Persistent reconnect failed: %s", exc)
+                            backoff = min(backoff * 2, 300)  # max 5min
+                await asyncio.sleep(backoff)
+        except asyncio.CancelledError:
+            pass
+        _LOGGER.info("Persistent connection keepalive stopped")
 
     async def _fetch_status(self) -> None:
         """Collect DP reports from the lock. Call while connected.

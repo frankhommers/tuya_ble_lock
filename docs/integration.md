@@ -11,18 +11,13 @@ Key features:
 - Temporary passwords with time limits
 - Lock settings (volume, auto-lock, privacy lock)
 - State persistence across HA restarts
+- Persistent BLE connection mode for instant response (with BLE proxies)
 
 ## Prerequisites
 
-1. A **Bluetooth adapter** on your Home Assistant host (built-in or USB)
+1. A **Bluetooth adapter** on your Home Assistant host (built-in, USB, or ESPHome BLE proxy)
 2. Home Assistant 2024.1 or later
-3. One of the following, depending on your chosen setup method:
-
-| Setup method | What you need | App required? | Cloud required? |
-|-------------|---------------|---------------|-----------------|
-| **Cloud-Assisted** | Tuya Smart / Smart Life app with the lock paired to your account | Yes (can remove after) | One-time only |
-| **Standalone** | A Tuya Smart / Smart Life app account (lock does NOT need to be paired) | Account only | One-time only |
-| **Manual** | The auth key (hex) for your lock, obtained by other means | No | No |
+3. A **Tuya Smart** or **Smart Life** app account with your locks paired to it
 
 ## Installation
 
@@ -42,56 +37,36 @@ Key features:
 
 ## Setup
 
-After installation, add the integration via **Settings > Devices & Services > Add Integration > Tuya BLE Lock**.
+### Hub Architecture
 
-### Setup Methods
+The integration uses a **hub-based architecture**: you create a single integration entry for your Tuya cloud account, and all your BLE locks are grouped as devices under it.
 
-The integration offers three setup paths:
+### First-Time Setup
 
-#### Cloud-Assisted (Recommended)
+1. Go to **Settings > Devices & Services > Add Integration > Tuya BLE Lock**
+2. Enter your Tuya Smart / Smart Life app email, password, country code, and cloud region
+3. The integration creates a "Tuya BLE Locks" hub
+4. Any locks already discovered via Bluetooth are added automatically
 
-**Requires:** Lock paired to your Tuya Smart / Smart Life app account.
+### Adding More Locks
 
-1. HA auto-discovers your lock via Bluetooth, or you enter the MAC address manually
-2. Enter your app email, password, country code, and cloud region
-3. The integration fetches the encryption keys and device credentials from the cloud
-4. If the lock is already paired to the app, setup completes instantly — no BLE pairing needed
-5. If the lock is not yet paired (new or factory-reset), the integration performs BLE pairing automatically using the fetched auth key
+Once the hub is set up, **new locks are added automatically**:
 
-This is the fastest path when you already have the lock in the Tuya app. The cloud is contacted once during setup and never again.
-
-#### Standalone
-
-**Requires:** A Tuya Smart / Smart Life app account. The lock does **not** need to be paired to it.
-
-1. Select your lock model from the dropdown
-2. Enter your Tuya app account credentials
-3. The integration fetches only the auth key from the cloud, then pairs the lock directly over BLE
-
-This is the best option for a brand new or factory-reset lock that you want to set up without ever adding it to the Tuya app. You still need a Tuya account because the auth key is stored on Tuya's servers.
-
-#### Manual Auth Key
-
-**Requires:** The auth key (hex string) for your lock. No app or cloud account needed.
-
-1. Paste the auth key directly
-2. The integration pairs the lock over BLE using this key
-
-Fully app-free and cloud-free. Use this if you've extracted the auth key by other means (e.g., from another integration, from a Tuya IoT Platform developer account, or shared by someone who set up the lock previously).
+1. Pair the lock to your Tuya Smart / Smart Life app (if not already)
+2. Ensure the lock is powered on and within Bluetooth range
+3. Home Assistant discovers the lock via BLE advertisement
+4. The integration fetches the encryption keys from the cloud using your saved credentials
+5. The lock appears as a new device under the "Tuya BLE Locks" hub — no user interaction needed
 
 ### Why Cloud Credentials Are Needed
 
-The **Cloud-Assisted** and **Standalone** setup methods require your Tuya Smart / Smart Life app credentials. Here's why:
+Tuya BLE locks use a unique encryption key (called an "auth key") assigned during manufacturing. This key is stored on Tuya's cloud servers and is required to establish a secure BLE session with the lock. There is no way to extract it from the lock itself.
 
-Tuya BLE locks use a unique encryption key (called an "auth key") that is assigned to each device during manufacturing. This key is stored on Tuya's cloud servers and is required to establish a secure BLE session with the lock. There is no way to extract it from the lock itself.
+During setup, the integration logs into the Tuya cloud API on your behalf to retrieve this key:
 
-During setup, the integration logs into the Tuya cloud API on your behalf to retrieve this key. After this one-time step:
-
-- **Your email and password are not stored** — they are used only during the setup flow and discarded immediately
+- **Your credentials are stored locally** in the hub config entry — they are never sent anywhere other than the Tuya cloud API during device setup.
 - **The lock is not associated or re-associated** with the account — the integration simply reads the device's auth key
-- **No cloud connection is ever made again** — all subsequent operations happen entirely over local Bluetooth
-
-If you prefer to avoid cloud credentials entirely, use the **Manual Auth Key** method and provide the auth key directly.
+- **No cloud connection is ever made for ongoing operations** — all lock/unlock commands happen entirely over local Bluetooth. The saved credentials are only used when a new lock is discovered and needs setup.
 
 ### Coexistence with the Tuya App
 
@@ -100,9 +75,20 @@ Setting up this integration does **not** remove your lock from the Tuya Smart / 
 However, BLE locks only support **one active connection at a time**. This means:
 
 - If the **Tuya app** is connected to the lock (e.g., you have the lock's page open), Home Assistant will not be able to connect until the app disconnects
-- If **Home Assistant** is holding a BLE connection (within 60 seconds of the last operation), the Tuya app will not be able to connect until HA's idle timeout expires
+- If **Home Assistant** is holding a BLE connection (within 60 seconds of the last operation, or permanently if persistent connection is enabled), the Tuya app will not be able to connect until HA disconnects
 
 In practice this is rarely an issue — the integration automatically disconnects after 60 seconds of inactivity, and the app only connects briefly when you interact with it. PINs, fingerprints, and cards always work regardless of which controller is connected, since they are processed locally by the lock.
+
+### Upgrading from Per-Lock Entries
+
+If you previously used a version of this integration that created separate config entries per lock, the upgrade is automatic. On first startup after updating:
+
+1. All per-lock entries are merged into a single "Tuya BLE Locks" hub
+2. Per-lock BLE credentials are moved to a device store
+3. Credential records (PINs, fingerprints, etc.) are updated to reference locks by MAC address
+4. The old per-lock entries are removed
+
+No manual action is needed.
 
 ## Entities
 
@@ -115,6 +101,7 @@ Each lock creates the following entities:
 | Battery state | `sensor` | Qualitative battery level: high, medium, low, exhausted. |
 | Privacy lock | `switch` | Electronic double-lock (DP 79). |
 | Passage mode | `switch` | Keep lock unlocked until manually locked. Only on supported models (e.g., H8 Pro). |
+| Persistent connection | `switch` | Keep BLE connection alive instead of disconnecting after 60s idle. Useful with ESPHome BLE proxies. |
 | Volume | `select` | Keypad sound level. Options vary by model (mute/normal or mute/low/normal/high). |
 | Auto-lock delay | `number` | Seconds before auto-lock engages. Only on models with passage mode. |
 | Refresh status | `button` | Force a BLE status refresh. |
@@ -123,7 +110,7 @@ Each lock creates the following entities:
 | Virtual ID | `sensor` | Device virtual ID (diagnostic). |
 | Auth key | `sensor` | Device auth key (diagnostic). |
 
-Volume, auto-lock delay, and refresh are **configuration entities** — they appear on the device page but not on the default dashboard.
+Volume, auto-lock delay, persistent connection, and refresh are **configuration entities** — they appear on the device page but not on the default dashboard.
 
 Diagnostic sensors (UUID, login key, virtual ID, auth key) are hidden by default and only visible when "Show disabled entities" is enabled.
 
@@ -166,6 +153,21 @@ The privacy lock (also called double lock) adds an extra electronic lock engagem
 
 Controlled via the **Privacy lock** switch entity (DP 79).
 
+## Persistent Connection
+
+By default, the integration disconnects from the lock after 60 seconds of inactivity to conserve battery and free the BLE slot. If you have **ESPHome Bluetooth proxies** or dedicated BLE adapters with enough capacity, you can enable the **Persistent connection** switch on each lock to keep the BLE connection alive permanently.
+
+When enabled:
+- Lock/unlock commands execute in ~1 second (no reconnect overhead)
+- DP push reports (motor state, physical unlock events) arrive in real-time
+- If the connection drops (lock sleeps, proxy restarts, out of range), the integration automatically reconnects with exponential backoff (30s → 60s → 120s → max 5min)
+- The setting persists across HA restarts
+
+Trade-offs:
+- **Battery**: The lock's BLE radio stays active, which may reduce battery life
+- **BLE slots**: Each persistent connection occupies one BLE connection slot on the proxy/adapter (ESP32 supports ~3 concurrent connections by default)
+- **App access**: The Tuya app cannot connect while HA holds the connection (see [Coexistence with the Tuya App](#coexistence-with-the-tuya-app))
+
 ## Services
 
 All services are available under the `tuya_ble_lock` domain in **Developer Tools > Services**.
@@ -178,7 +180,7 @@ Enroll a PIN code on one or more locks.
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `device_id` | Yes | Lock device(s) to add the PIN to |
+| `device_id` | Yes | Lock device(s) — use MAC address or HA device ID |
 | `pin_code` | Yes | PIN digits (6-10 digits) |
 | `person` | No | HA person to associate with |
 | `admin` | No | Whether this is an admin credential (default: false) |
@@ -264,11 +266,11 @@ See the [Adding New Devices](../README.md#adding-new-devices) section in the REA
 - Wake the lock by touching the keypad or fingerprint sensor
 - Check that your HA host has a working Bluetooth adapter (`bluetoothctl show`)
 
-### Pairing fails
+### Lock not auto-added
 
-- The lock must be in **pairing mode** (usually: factory reset, or remove from Tuya app)
-- If already bound to another controller, you may need to factory reset the lock first
-- Ensure your Tuya cloud credentials are correct and the cloud region matches your app
+- The lock must be **paired to your Tuya Smart / Smart Life app** before it can be auto-added
+- Check HA logs for "cloud_fetch_failed" messages — this usually means the lock isn't on your Tuya account
+- Ensure your cloud credentials in the hub entry are still valid
 
 ### Lock shows "Unavailable"
 
@@ -281,6 +283,7 @@ See the [Adding New Devices](../README.md#adding-new-devices) section in the REA
 - First operation after idle may take 5-15 seconds (BLE reconnect + handshake)
 - Subsequent operations within 60 seconds are fast (~1 second) due to idle-disconnect caching
 - If the Tuya app is open on the lock's page, it may be holding the BLE connection — close the app and try again (see [Coexistence with the Tuya App](#coexistence-with-the-tuya-app))
+- Enable **Persistent connection** to eliminate reconnect delays entirely
 
 ### Battery shows "Unknown"
 

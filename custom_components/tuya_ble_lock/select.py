@@ -12,14 +12,13 @@ from .models import TuyaBLELockData
 
 async def async_setup_entry(hass, entry, async_add_entities):
     data: TuyaBLELockData = entry.runtime_data
-    profile = data.profile or {}
-    vol_cfg = profile.get("entities", {}).get("volume_select")
-
     entities = []
-    if vol_cfg:
-        options = [o.capitalize() for o in vol_cfg.get("options", ["mute", "normal"])]
-        entities.append(TuyaBLEVolumeSelect(data.coordinator, entry, options))
-
+    for mac, coordinator in data.coordinators.items():
+        profile = coordinator.profile or {}
+        vol_cfg = profile.get("entities", {}).get("volume_select")
+        if vol_cfg:
+            options = [o.capitalize() for o in vol_cfg.get("options", ["mute", "normal"])]
+            entities.append(TuyaBLEVolumeSelect(coordinator, entry, options))
     if entities:
         async_add_entities(entities)
 
@@ -32,7 +31,6 @@ class TuyaBLEVolumeSelect(TuyaBLELockEntity, SelectEntity, RestoreEntity):
     def __init__(self, coordinator, entry, options: list[str]):
         super().__init__(coordinator, entry)
         self._attr_options = options
-        # Build bidirectional mappings: "Mute" <-> 0, "Normal" <-> 1, etc.
         self._label_to_val = {label: idx for idx, label in enumerate(options)}
         self._val_to_label = {idx: label for idx, label in enumerate(options)}
 

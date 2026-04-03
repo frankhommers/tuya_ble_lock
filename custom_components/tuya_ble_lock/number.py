@@ -12,14 +12,13 @@ from .models import TuyaBLELockData
 
 async def async_setup_entry(hass, entry, async_add_entities):
     data: TuyaBLELockData = entry.runtime_data
-    profile = data.profile or {}
-    entities_cfg = profile.get("entities", {})
-
     entities = []
-    if "auto_lock_time_number" in entities_cfg:
-        cfg = entities_cfg["auto_lock_time_number"]
-        entities.append(TuyaBLEAutoLockTimeNumber(data.coordinator, entry, cfg))
-
+    for mac, coordinator in data.coordinators.items():
+        profile = coordinator.profile or {}
+        entities_cfg = profile.get("entities", {})
+        if "auto_lock_time_number" in entities_cfg:
+            cfg = entities_cfg["auto_lock_time_number"]
+            entities.append(TuyaBLEAutoLockTimeNumber(coordinator, entry, cfg))
     if entities:
         async_add_entities(entities)
 

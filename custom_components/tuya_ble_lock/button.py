@@ -11,9 +11,11 @@ from .models import TuyaBLELockData
 
 async def async_setup_entry(hass, entry, async_add_entities):
     data: TuyaBLELockData = entry.runtime_data
-    async_add_entities([
-        TuyaBLERefreshButton(data.coordinator, entry),
-    ])
+    entities = []
+    for mac, coordinator in data.coordinators.items():
+        entities.append(TuyaBLERefreshButton(coordinator, entry))
+    if entities:
+        async_add_entities(entities)
 
 
 class TuyaBLERefreshButton(TuyaBLELockEntity, ButtonEntity):

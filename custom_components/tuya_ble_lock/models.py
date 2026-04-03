@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from .coordinator import TuyaBLELockCoordinator
     from .credential_store import CredentialStore
+    from .device_store import DeviceStore
 
 
 @dataclass
 class TuyaBLELockData:
-    coordinator: TuyaBLELockCoordinator
+    """Runtime data for the single hub config entry."""
+
+    device_store: DeviceStore
     credential_store: CredentialStore
-    profile: dict | None = None
-    platforms: list | None = None
+    coordinators: dict[str, TuyaBLELockCoordinator] = field(default_factory=dict)
+    platforms: list = field(default_factory=list)
 
 
 @dataclass

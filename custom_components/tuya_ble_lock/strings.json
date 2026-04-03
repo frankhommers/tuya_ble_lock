@@ -1,25 +1,9 @@
 {
   "config": {
     "step": {
-      "bluetooth": {
-        "description": "Tuya BLE Smart Lock discovered: {name}"
-      },
-      "user": {
-        "data": {
-          "mac": "MAC Address"
-        },
-        "description": "Enter the Bluetooth MAC address of your Tuya BLE lock."
-      },
-      "choose_method": {
-        "title": "Setup Method",
-        "description": "How would you like to set up {name}?",
-        "data": {
-          "setup_method": "Setup method"
-        }
-      },
       "cloud_login": {
         "title": "Tuya Cloud Credentials",
-        "description": "Enter your Tuya Smart or Smart Life app credentials. These are used to fetch encryption keys and device info.",
+        "description": "Enter your Tuya Smart or Smart Life app credentials. These are used to fetch encryption keys for your locks. All discovered locks will be added automatically.",
         "data": {
           "email": "Email",
           "password": "Password",
@@ -27,50 +11,21 @@
           "region": "Cloud region"
         }
       },
-      "standalone": {
-        "title": "Standalone Pairing",
-        "description": "Select your lock model and enter Tuya credentials to fetch the auth key. Device UUID: {uuid}",
-        "data": {
-          "product_id": "Lock model",
-          "email": "Email",
-          "password": "Password",
-          "country_code": "Country code",
-          "region": "Tuya region"
-        }
-      },
-      "manual_auth": {
-        "title": "Manual Auth Key",
-        "description": "Paste the device auth key (hex string).",
-        "data": {
-          "auth_key": "Auth key (hex)"
-        }
-      },
-      "pair": {
-        "title": "Pairing",
-        "description": "Pairing with the lock... Please wait. Ensure the lock is in pairing mode."
-      },
-      "existing_credentials": {
-        "title": "Device Already Paired",
-        "description": "This lock is already bound from a previous pairing. Enter the existing login key and virtual ID, or factory reset the lock and try again.",
-        "data": {
-          "login_key": "Login key (hex)",
-          "virtual_id": "Virtual ID (hex)"
-        }
-      },
-      "confirm": {
-        "title": "Confirm Setup",
-        "description": "Ready to set up {name} ({mac})."
+      "confirm_new_device": {
+        "title": "New Lock Found",
+        "description": "A new Tuya BLE lock was found: {name} ({mac}). This lock needs BLE pairing. Please pair it via the Tuya app first, then it will be added automatically on next discovery."
       }
     },
     "error": {
-      "invalid_credentials": "Invalid Tuya cloud credentials.",
-      "auth_key_failed": "Could not retrieve encryption key from Tuya cloud.",
-      "pairing_failed": "BLE pairing failed. Ensure the lock is in pairing mode.",
-      "device_not_found": "Device not found. Ensure it is powered on and nearby.",
-      "no_uuid": "Could not determine device UUID from BLE advertisement. Try cloud setup or paste auth key manually."
+      "auth_key_failed": "Could not connect to Tuya cloud. Check your credentials, country code, and region."
     },
     "abort": {
-      "already_configured": "This lock is already configured."
+      "already_configured": "This lock is already configured.",
+      "single_instance_allowed": "A Tuya BLE Lock hub is already configured. New locks are added automatically via Bluetooth discovery.",
+      "device_added": "Lock added successfully. It will appear shortly.",
+      "missing_credentials": "Hub entry has no cloud credentials. Please reconfigure the integration.",
+      "cloud_fetch_failed": "Could not fetch device info from Tuya cloud. The lock may not be paired to your Tuya app account.",
+      "pairing_not_implemented": "BLE pairing for unbound devices is not yet supported in auto-add mode. Please pair the lock via the Tuya app first."
     }
   },
   "entity": {
@@ -87,7 +42,8 @@
     },
     "switch": {
       "auto_lock": { "name": "Auto-lock" },
-      "double_lock": { "name": "Double lock" }
+      "double_lock": { "name": "Double lock" },
+      "persistent_connection": { "name": "Persistent connection" }
     },
     "select": {
       "volume": { "name": "Keypad sound" }

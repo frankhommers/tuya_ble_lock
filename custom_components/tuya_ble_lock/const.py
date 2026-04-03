@@ -1,5 +1,6 @@
 DOMAIN = "tuya_ble_lock"
 STORAGE_KEY = "tuya_ble_lock_credentials"
+STORAGE_KEY_DEVICES = "tuya_ble_lock_devices"
 STORAGE_VERSION = 1
 
 # GATT UUIDs (FD50 defaults — auto-detected at runtime via _resolve_gatt_uuids)
@@ -48,14 +49,16 @@ STAGE_NAMES = {
     0xFF: "COMPLETE",
 }
 
-# Config entry data keys
-CONF_LOGIN_KEY    = "login_key"
-CONF_VIRTUAL_ID   = "virtual_id"
-CONF_DEVICE_UUID  = "device_uuid"
-CONF_DEVICE_MAC   = "device_mac"
-CONF_AUTH_KEY     = "auth_key"
-CONF_PRODUCT_ID   = "product_id"
+# Config entry data keys (v2 hub entry — cloud account)
 CONF_TUYA_EMAIL   = "tuya_email"
 CONF_TUYA_PASSWORD = "tuya_password"
 CONF_TUYA_COUNTRY = "tuya_country_code"
 CONF_TUYA_REGION  = "tuya_region"
+
+# Device store keys (per-lock, in .storage)
+CONF_DEVICE_MAC   = "device_mac"
+CONF_DEVICE_UUID  = "device_uuid"
+CONF_LOGIN_KEY    = "login_key"
+CONF_VIRTUAL_ID   = "virtual_id"
+CONF_AUTH_KEY     = "auth_key"
+CONF_PRODUCT_ID   = "product_id"

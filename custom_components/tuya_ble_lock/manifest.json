@@ -7,7 +7,7 @@
   "documentation": "https://github.com/tkhadimullin/tuya_ble_lock/blob/main/docs/integration.md",
   "issue_tracker": "https://github.com/tkhadimullin/tuya_ble_lock/issues",
   "iot_class": "local_push",
-  "integration_type": "device",
+  "integration_type": "hub",
   "dependencies": ["bluetooth_adapters"],
   "requirements": ["cryptography>=41.0.0", "bleak>=0.21.0", "bleak-retry-connector>=3.5.0"],
   "bluetooth": [

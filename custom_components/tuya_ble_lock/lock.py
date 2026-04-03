@@ -16,7 +16,11 @@ from .models import TuyaBLELockData
 
 async def async_setup_entry(hass, entry, async_add_entities):
     data: TuyaBLELockData = entry.runtime_data
-    async_add_entities([TuyaBLELock(data.coordinator, entry)])
+    entities = []
+    for mac, coordinator in data.coordinators.items():
+        entities.append(TuyaBLELock(coordinator, entry))
+    if entities:
+        async_add_entities(entities)
 
 
 class TuyaBLELock(TuyaBLELockEntity, LockEntity, RestoreEntity):
@@ -68,17 +72,6 @@ class TuyaBLELock(TuyaBLELockEntity, LockEntity, RestoreEntity):
         self.async_write_ha_state()
 
     def _handle_coordinator_update(self) -> None:
-        """React to DP pushes for lock state.
-
-        Motor state:
-        - True = motor actively running (lock/unlock in progress)
-        - False = motor stopped → lock is now locked
-        Only re-lock when currently unlocked to avoid spurious updates.
-
-        Passage mode sync:
-        - auto_lock=False (passage ON) = lock is unlocked
-        - auto_lock=True (passage OFF) = lock is locked
-        """
         motor = self.coordinator.state.get("motor_state")
         if motor is False and not self._is_locked:
             self._is_locked = True
