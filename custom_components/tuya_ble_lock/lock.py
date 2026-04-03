@@ -7,6 +7,8 @@ via RestoreEntity.
 
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.lock import LockEntity
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -43,6 +45,10 @@ class TuyaBLELock(TuyaBLELockEntity, LockEntity, RestoreEntity):
     @property
     def is_locked(self) -> bool:
         return self._is_locked
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"ble_connected": self.coordinator._session.is_connected}
 
     @property
     def is_locking(self) -> bool:
