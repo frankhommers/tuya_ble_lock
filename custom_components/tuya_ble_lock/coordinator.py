@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import struct
 import time
 from datetime import timedelta
 from typing import Any
 
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -22,6 +24,9 @@ DEFAULT_CHECK_CODE = b"12345678"
 
 # Keep BLE connection alive for this long after last operation
 IDLE_DISCONNECT_SECONDS = 60
+
+# Cooldown: don't retry connection if last failure was within this window
+CONNECT_COOLDOWN_SECONDS = 600  # 10 minutes
 
 
 class TuyaBLELockCoordinator(DataUpdateCoordinator):
@@ -54,6 +59,11 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
         self._listener_task: asyncio.Task | None = None
         self._persistent_connection: bool = False
         self._keepalive_task: asyncio.Task | None = None
+        self._last_connect_failure: float = 0.0  # monotonic timestamp
+        self._stopping: bool = False
+
+        # Listen for HA shutdown to cancel background tasks
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self._on_ha_stop)
 
         # Build state dict from profile's state_map
         self.state: dict[str, Any] = {}
@@ -83,7 +93,7 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
 
     def _process_dp_reports(self, dps: list[dict]) -> None:
         """Update state from DP reports using profile's state_map."""
-        _LOGGER.warning("Processing %d DPs: %s", len(dps),
+        _LOGGER.debug("Processing %d DPs: %s", len(dps),
                         [(dp["id"], dp["raw"].hex()) for dp in dps])
         state_map = self._profile.get("state_map", {})
         changed = False
@@ -145,7 +155,7 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
                         from .ble_protocol import parse_frames
                         frames = parse_frames(self._session._keys, raw)
                         if frames:
-                            _LOGGER.warning("Listener: %d frames from %d notifications",
+                            _LOGGER.debug("Listener: %d frames from %d notifications",
                                             len(frames), len(raw))
                             self._session._dispatch_dp_reports(frames)
         except Exception as exc:
@@ -158,13 +168,22 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
         if self._persistent_connection:
             return  # persistent mode — don't disconnect
         if self._session.is_connected:
-            _LOGGER.warning("Idle timeout (%ds), disconnecting BLE", IDLE_DISCONNECT_SECONDS)
+            _LOGGER.debug("Idle timeout (%ds), disconnecting BLE", IDLE_DISCONNECT_SECONDS)
             await self._session.async_disconnect()
         # Listener will exit on its own when is_connected becomes False
 
     @property
     def persistent_connection(self) -> bool:
         return self._persistent_connection
+
+    async def _on_ha_stop(self, event) -> None:
+        """Cancel background tasks on HA shutdown."""
+        self._stopping = True
+        self._persistent_connection = False
+        if self._keepalive_task and not self._keepalive_task.done():
+            self._keepalive_task.cancel()
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
 
     async def async_set_persistent_connection(self, enabled: bool) -> None:
         """Enable or disable persistent BLE connection."""
@@ -189,29 +208,37 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
         """Start the keepalive loop that reconnects when BLE drops."""
         if self._keepalive_task and not self._keepalive_task.done():
             return
-        self._keepalive_task = self.hass.async_create_task(self._keepalive_loop())
+        # Use background task so it doesn't block HA startup
+        self._keepalive_task = self._entry.async_create_background_task(
+            self.hass, self._keepalive_loop(),
+            f"tuya_ble_lock_keepalive_{self._mac}",
+        )
 
     async def _keepalive_loop(self) -> None:
         """Periodically check connection and reconnect if needed."""
-        backoff = 30
-        _LOGGER.info("Persistent connection keepalive started")
+        backoff = 60
+        # Stagger startup: wait a random 10-60s before first attempt
+        await asyncio.sleep(random.uniform(10, 60))
+        _LOGGER.debug("Persistent connection keepalive started for %s", self._mac)
         try:
-            while self._persistent_connection:
+            while self._persistent_connection and not self._stopping:
                 if not self._session.is_connected:
-                    _LOGGER.info("Persistent connection: reconnecting...")
+                    _LOGGER.debug("Persistent connection: reconnecting %s...", self._mac)
                     async with self._op_lock:
                         try:
                             await self._async_ensure_connected()
                             await self._fetch_status()
                             self._start_listener()
-                            backoff = 30  # reset on success
+                            backoff = 60  # reset on success
                         except Exception as exc:
-                            _LOGGER.debug("Persistent reconnect failed: %s", exc)
-                            backoff = min(backoff * 2, 300)  # max 5min
-                await asyncio.sleep(backoff)
+                            _LOGGER.debug("Persistent reconnect failed for %s: %s", self._mac, exc)
+                            backoff = min(backoff * 2, 600)  # max 10min
+                # Add jitter to prevent thundering herd with multiple devices
+                jitter = random.uniform(0.8, 1.2)
+                await asyncio.sleep(backoff * jitter)
         except asyncio.CancelledError:
             pass
-        _LOGGER.info("Persistent connection keepalive stopped")
+        _LOGGER.debug("Persistent connection keepalive stopped for %s", self._mac)
 
     async def _fetch_status(self) -> None:
         """Collect DP reports from the lock. Call while connected.
@@ -231,7 +258,7 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
                     await self._session.async_send_dp_raw(trigger_dp, trigger_payload)
                 # Collect any pushed DPs (triggered or auto-pushed after commands)
                 extra = await self._session._collect(timeout=3.0)
-                _LOGGER.warning("Status collect: %d frames", len(extra))
+                _LOGGER.debug("Status collect: %d frames", len(extra))
                 self._session._dispatch_dp_reports(extra)
             except Exception as exc:
                 _LOGGER.warning("Status fetch failed: %s", exc)
@@ -251,20 +278,29 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Connect to the lock and refresh all status DPs."""
+        # Skip if we recently failed — don't spam BLE on every 12h poll
+        since_fail = time.monotonic() - self._last_connect_failure
+        if not self._session.is_connected and since_fail < CONNECT_COOLDOWN_SECONDS:
+            _LOGGER.debug(
+                "Poll: skipping %s, last connect failed %ds ago (cooldown %ds)",
+                self._mac, int(since_fail), CONNECT_COOLDOWN_SECONDS,
+            )
+            return self.state
         async with self._op_lock:
             try:
                 await self._async_ensure_connected()
                 await self._fetch_status()
                 self._reset_idle_timer()
             except UpdateFailed:
-                _LOGGER.debug("Poll: BLE connect failed, returning stale state")
+                _LOGGER.debug("Poll: BLE connect failed for %s, returning stale state", self._mac)
             except Exception as exc:
-                _LOGGER.warning("Poll error: %s", exc)
+                _LOGGER.debug("Poll error for %s: %s", self._mac, exc)
         return self.state
 
     async def _async_ensure_connected(self) -> None:
         if not self._session.is_connected:
             if not await self._session.async_connect():
+                self._last_connect_failure = time.monotonic()
                 raise UpdateFailed("BLE connection to lock failed")
 
     def _build_unlock_payload(self, action_unlock: bool) -> bytes:
@@ -297,7 +333,7 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
             await self._async_ensure_connected()
             unlock_dp = self._get_unlock_dp()
             payload = self._build_unlock_payload(action_unlock=False)
-            _LOGGER.warning("Sending lock command (DP %d RAW, %d bytes): %s", unlock_dp, len(payload), payload.hex())
+            _LOGGER.debug("Sending lock command (DP %d RAW, %d bytes): %s", unlock_dp, len(payload), payload.hex())
             try:
                 await self._session.async_send_dp_fire_and_forget(unlock_dp, 0, payload)
             except Exception as exc:
@@ -315,7 +351,7 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
             await self._async_ensure_connected()
             unlock_dp = self._get_unlock_dp()
             payload = self._build_unlock_payload(action_unlock=True)
-            _LOGGER.warning("Sending unlock command (DP %d RAW, %d bytes): %s", unlock_dp, len(payload), payload.hex())
+            _LOGGER.debug("Sending unlock command (DP %d RAW, %d bytes): %s", unlock_dp, len(payload), payload.hex())
             try:
                 await self._session.async_send_dp_fire_and_forget(unlock_dp, 0, payload)
             except Exception as exc:

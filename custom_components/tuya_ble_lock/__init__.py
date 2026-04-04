@@ -214,5 +214,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data: TuyaBLELockData = entry.runtime_data
     for coordinator in data.coordinators.values():
+        coordinator._stopping = True
+        coordinator._persistent_connection = False
+        if coordinator._keepalive_task and not coordinator._keepalive_task.done():
+            coordinator._keepalive_task.cancel()
+        if coordinator._idle_timer is not None:
+            coordinator._idle_timer.cancel()
         await coordinator._session.async_disconnect()
     return await hass.config_entries.async_unload_platforms(entry, data.platforms)

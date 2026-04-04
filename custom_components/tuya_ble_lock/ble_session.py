@@ -98,7 +98,7 @@ class TuyaBLELockSession:
         if write_char is not None and notify_char is not None:
             self._write_uuid = WRITE_UUID
             self._notify_uuid = NOTIFY_UUID
-            _LOGGER.warning("Using FD50 GATT characteristics for %s", self._ble_device.address)
+            _LOGGER.debug("Using FD50 GATT characteristics for %s", self._ble_device.address)
             return WRITE_UUID, NOTIFY_UUID
 
         # Fall back: scan all services for write-without-response + notify chars
@@ -113,7 +113,7 @@ class TuyaBLELockSession:
         if write_uuid and notify_uuid:
             self._write_uuid = write_uuid
             self._notify_uuid = notify_uuid
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Using discovered GATT characteristics for %s: write=%s notify=%s",
                 self._ble_device.address, write_uuid, notify_uuid,
             )
@@ -131,7 +131,7 @@ class TuyaBLELockSession:
         self.is_connected = False
 
     def _on_notify(self, sender, data):
-        _LOGGER.warning("BLE NOTIFY received: len=%d hex=%s", len(data), bytes(data)[:40].hex())
+        _LOGGER.debug("BLE NOTIFY received: len=%d hex=%s", len(data), bytes(data)[:40].hex())
         self._notif_buf.append(bytes(data))
 
     def _derive_session(self, srand: bytes) -> None:
@@ -198,14 +198,14 @@ class TuyaBLELockSession:
             _LOGGER.debug("Got %d raw notifications for cmd=0x%04x", len(raw), cmd)
             # Reassemble and decrypt all notifications at once
             frames = parse_frames(self._keys, raw)
-            _LOGGER.warning("Parsed %d frames from %d notifications for cmd=0x%04x: %s",
+            _LOGGER.debug("Parsed %d frames from %d notifications for cmd=0x%04x: %s",
                             len(frames), len(raw), cmd,
                             [(f["cmd"], f.get("data", b"")[:20].hex()) for f in frames])
             if not frames and raw:
                 # We got data but couldn't decode — log reassembled payloads
                 payloads = ble_protocol.reassemble(raw)
                 for p in payloads:
-                    _LOGGER.warning(
+                    _LOGGER.debug(
                         "Undecoded response: sec_flag=%d len=%d hex=%s",
                         p[0] if p else -1, len(p), p[:40].hex(),
                     )
@@ -270,7 +270,7 @@ class TuyaBLELockSession:
         for f in frames:
             dps = self._extract_dps_from_frame(f)
             if dps:
-                _LOGGER.warning("Extracted DPs from cmd=0x%04x: %s",
+                _LOGGER.debug("Extracted DPs from cmd=0x%04x: %s",
                                 f["cmd"], [(d["id"], d["raw"].hex()) for d in dps])
             all_dps.extend(dps)
         if all_dps:
@@ -307,8 +307,12 @@ class TuyaBLELockSession:
                 )
                 if fresh:
                     self._ble_device = fresh
-                _LOGGER.warning("Reconnect attempt %d/%d for %s: connecting...",
-                                attempt + 1, max_attempts, self._ble_device.address)
+                # Log which BLE adapter/source will be used
+                _details = getattr(self._ble_device, 'details', None) or {}
+                _source = _details.get('source') if isinstance(_details, dict) else getattr(_details, 'source', None)
+                _LOGGER.debug("Reconnect attempt %d/%d for %s (source=%s, rssi=%s): connecting...",
+                              attempt + 1, max_attempts, self._ble_device.address,
+                              _source, getattr(self._ble_device, 'rssi', '?'))
                 self._client = await establish_connection(
                     client_class=BleakClient,
                     device=self._ble_device,
@@ -320,9 +324,9 @@ class TuyaBLELockSession:
                 if self._client.services:
                     for svc in self._client.services:
                         chars = [f"{c.uuid}({','.join(c.properties)})" for c in svc.characteristics]
-                        _LOGGER.warning("  GATT Service %s: %s", svc.uuid, chars)
+                        _LOGGER.debug("  GATT Service %s: %s", svc.uuid, chars)
                 else:
-                    _LOGGER.warning("No GATT services discovered for %s", self._ble_device.address)
+                    _LOGGER.debug("No GATT services discovered for %s", self._ble_device.address)
                 # Resolve write/notify UUIDs — try FD50 first, fall back to A201
                 write_uuid, notify_uuid = self._resolve_gatt_uuids()
                 if not write_uuid or not notify_uuid:
@@ -341,7 +345,7 @@ class TuyaBLELockSession:
                 except Exception:
                     pass
                 self._notif_buf.clear()
-                _LOGGER.warning("Starting notify on %s for %s", notify_uuid, self._ble_device.address)
+                _LOGGER.debug("Starting notify on %s for %s", notify_uuid, self._ble_device.address)
                 await self._client.start_notify(notify_uuid, self._on_notify)
                 self.is_connected = True
 
@@ -369,7 +373,7 @@ class TuyaBLELockSession:
 
                 if not got_data:
                     # No auto-push: send DEVICE_INFO explicitly (FD50 devices)
-                    _LOGGER.warning("No auto-push, sending device info (sec_flag=4)")
+                    _LOGGER.debug("No auto-push, sending device info (sec_flag=4)")
                     await self._send_encrypted(CMD_DEVICE_INFO, mtu_data, SEC_LOGIN_KEY)
                     deadline_di = time.monotonic() + 4.0
                     while time.monotonic() < deadline_di:
@@ -381,17 +385,17 @@ class TuyaBLELockSession:
                     self._notif_buf.clear()
 
                 if not raw:
-                    _LOGGER.warning("No device info response on attempt %d", attempt + 1)
+                    _LOGGER.debug("No device info response on attempt %d", attempt + 1)
                     await asyncio.sleep(2.0)
                     continue
 
-                _LOGGER.warning(
+                _LOGGER.debug(
                     "Got %d raw notifications for device info, sizes=%s",
                     len(raw), [len(r) for r in raw[:10]],
                 )
                 frames = parse_frames(self._keys, raw)
                 if not frames:
-                    _LOGGER.warning("Could not decrypt device info response (attempt %d)", attempt + 1)
+                    _LOGGER.debug("Could not decrypt device info response (attempt %d)", attempt + 1)
                     await asyncio.sleep(2.0)
                     continue
                 # Dispatch any DP reports that arrived with device info
@@ -400,18 +404,18 @@ class TuyaBLELockSession:
                 for f in frames:
                     if f["cmd"] == CMD_DEVICE_INFO and len(f["data"]) >= 12:
                         srand = f["data"][6:12]
-                        _LOGGER.warning("Device info OK, srand=%s", srand.hex())
+                        _LOGGER.debug("Device info OK, srand=%s", srand.hex())
                         break
                 if srand:
                     break
             except Exception as exc:
-                _LOGGER.warning("Reconnect attempt %d for %s failed: %s",
-                                attempt + 1, self._ble_device.address, exc)
+                _LOGGER.debug("Reconnect attempt %d for %s failed: %s",
+                              attempt + 1, self._ble_device.address, exc)
                 await asyncio.sleep(2.0)
 
         if not srand:
-            _LOGGER.error("No device info response from %s after %d reconnect attempt(s)",
-                          self._ble_device.address, max_attempts)
+            _LOGGER.debug("No device info response from %s after %d reconnect attempt(s)",
+                         self._ble_device.address, max_attempts)
             self.is_connected = False
             return False
 
@@ -421,15 +425,15 @@ class TuyaBLELockSession:
         # After deriving session key, collect remaining auto-pushed data
         # (PAIR + TIME_REQUEST + DPs arrive ~0.3s after DEVICE_INFO)
         post_di = await self._collect(timeout=3.5)
-        _LOGGER.warning("Post-DEVICE_INFO collect: %d frames: %s",
-                        len(post_di), [(f["cmd"], f.get("sec_flag")) for f in post_di])
+        _LOGGER.debug("Post-DEVICE_INFO collect: %d frames: %s",
+                      len(post_di), [(f["cmd"], f.get("sec_flag")) for f in post_di])
         all_frames = frames + post_di
         self._dispatch_dp_reports(post_di)
 
         # Check if PAIR was already auto-pushed (e.g. H8 Pro)
         pair_already = any(f["cmd"] == CMD_PAIR for f in all_frames)
         if pair_already:
-            _LOGGER.warning("PAIR already received in auto-push, skipping pair command")
+            _LOGGER.debug("PAIR already received in auto-push, skipping pair command")
         else:
             # Pair/reauth: uuid(16) + login_key(6) + virtual_id(22) padded to 44
             uuid_bytes = self._device_uuid.encode()[:16]
@@ -453,7 +457,7 @@ class TuyaBLELockSession:
                 await self._handle_time_requests(pair_frames)
                 self._dispatch_dp_reports(pair_frames)
             else:
-                _LOGGER.warning("No pair/reauth response (may be OK)")
+                _LOGGER.debug("No pair/reauth response (may be OK)")
 
         # Collect extra unsolicited reports (DP reports, time requests)
         extra = await self._collect(timeout=1.5)
@@ -462,7 +466,7 @@ class TuyaBLELockSession:
         # Note: volume safety check removed — DP 71 (ble_unlock_check) works even with mute.
         # DP 46 (manual_lock) still requires volume=normal, but we no longer use it.
 
-        _LOGGER.warning("BLE session established with %s", self._ble_device.address)
+        _LOGGER.info("BLE session established with %s", self._ble_device.address)
         return True
 
     async def async_disconnect(self) -> None:
