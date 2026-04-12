@@ -186,7 +186,7 @@ class TuyaBLELockSession:
         )
         for i, w in enumerate(writes):
             _LOGGER.debug("  frag[%d]: len=%d hex=%s", i, len(w), w.hex())
-            await self._client.write_gatt_char(self._write_uuid, w, response=False)
+            await self._client.write_gatt_char(self._write_uuid, w, response=True)
             await asyncio.sleep(0.05)
 
     async def _send_recv(
