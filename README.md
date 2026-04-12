@@ -243,6 +243,8 @@ The integration uses JSON device profiles. To add a new lock:
 2. Rename to your lock's `product_id`, e.g. `abc123de.json`
 3. Fill in the profile fields:
 
+To discover which DPs your lock supports, you'll need a Tuya IoT Platform developer account. The best guide for setting this up is the [LocalTuya Cloud API setup guide](https://xzetsubou.github.io/hass-localtuya/cloud_api/). Once configured, you can query your device's DP schema through the Tuya IoT Platform's **Device Management** page.
+
 ```json
 {
   "product_id": "abc123de",
