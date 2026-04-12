@@ -1,15 +1,15 @@
 {
   "product_id": "ba2qk177",
   "name": "K3 BLE PRO 2",
-  "model": "K3 BLE PRO 2",
-  "category": "jtmsbh",
+  "model": "K3",
+  "category": "jtmspro",
   "entities": {
     "lock": {
       "unlock_dp": 71,
       "behavior": "momentary"
     },
     "battery_sensor": {
-      "dp": [8, 520],
+      "dp": [8],
       "trigger_dp": 69,
       "trigger_payload": "ffff0001303030303030303000"
     },
@@ -17,6 +17,24 @@
       "dp": 31,
       "dp_type": "enum",
       "options": ["mute", "low", "normal", "high"]
+    },
+    "language_select": {
+      "dp": 28,
+      "dp_type": "enum",
+      "options": ["chinese_simplified", "english"]
+    },
+    "unlock_mode_select": {
+      "dp": 34,
+      "dp_type": "enum",
+      "options": ["single_unlock", "finger_password", "finger_card", "password_card"]
+    },
+    "passage_mode_switch": {
+      "dp": 33
+    },
+    "auto_lock_time_number": {
+      "dp": 36,
+      "min": 1,
+      "max": 1800
     }
   },
   "services": {
@@ -25,10 +43,25 @@
     "create_temp_password": { "dp": 51 }
   },
   "state_map": {
-    "8": { "key": "battery_percent", "parse": "int" },
-    "520": { "key": "battery_percent", "parse": "int" },
-    "9": { "key": "battery_state", "parse": "battery_state_enum" },
+    "8":  { "key": "battery_percent", "parse": "int" },
+    "12": { "key": "unlock_fingerprint", "parse": "int" },
+    "13": { "key": "unlock_password", "parse": "int" },
+    "14": { "key": "unlock_dynamic", "parse": "int" },
+    "15": { "key": "unlock_card", "parse": "int" },
+    "16": { "key": "unlock_key", "parse": "int" },
+    "19": { "key": "unlock_ble", "parse": "int" },
+    "21": { "key": "alarm_lock", "parse": "enum_string" },
+    "22": { "key": "hijack", "parse": "bool" },
+    "24": { "key": "doorbell", "parse": "bool" },
+    "25": { "key": "message", "parse": "bool" },
+    "28": { "key": "language", "parse": "raw_byte" },
     "31": { "key": "volume", "parse": "raw_byte" },
+    "33": { "key": "auto_lock", "parse": "bool" },
+    "34": { "key": "unlock_switch", "parse": "raw_byte" },
+    "36": { "key": "auto_lock_time", "parse": "int" },
+    "40": { "key": "closed_opened", "parse": "enum_string" },
+    "44": { "key": "rtc_lock", "parse": "bool" },
+    "46": { "key": "manual_lock", "parse": "bool" },
     "47": { "key": "motor_state", "parse": "bool" }
   }
 }

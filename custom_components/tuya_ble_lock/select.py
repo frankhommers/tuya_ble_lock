@@ -9,16 +9,42 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .entity import TuyaBLELockEntity
 from .models import TuyaBLELockData
 
+_ENUM_SELECTS = [
+    {
+        "config_key": "language_select",
+        "name": "Language",
+        "icon": "mdi:translate",
+        "state_key": "language",
+        "uid_suffix": "language",
+        "default_dp": 28,
+    },
+    {
+        "config_key": "unlock_mode_select",
+        "name": "Unlock mode",
+        "icon": "mdi:lock-smart",
+        "state_key": "unlock_switch",
+        "uid_suffix": "unlock_mode",
+        "default_dp": 34,
+    },
+]
+
 
 async def async_setup_entry(hass, entry, async_add_entities):
     data: TuyaBLELockData = entry.runtime_data
     entities = []
     for mac, coordinator in data.coordinators.items():
         profile = coordinator.profile or {}
-        vol_cfg = profile.get("entities", {}).get("volume_select")
+        entities_cfg = profile.get("entities", {})
+        vol_cfg = entities_cfg.get("volume_select")
         if vol_cfg:
-            options = [o.capitalize() for o in vol_cfg.get("options", ["mute", "normal"])]
+            options = [
+                o.capitalize() for o in vol_cfg.get("options", ["mute", "normal"])
+            ]
             entities.append(TuyaBLEVolumeSelect(coordinator, entry, options))
+        for spec in _ENUM_SELECTS:
+            cfg = entities_cfg.get(spec["config_key"])
+            if cfg:
+                entities.append(TuyaBLEEnumSelect(coordinator, entry, cfg, spec))
     if entities:
         async_add_entities(entities)
 
@@ -56,3 +82,46 @@ class TuyaBLEVolumeSelect(TuyaBLELockEntity, SelectEntity, RestoreEntity):
         value = self._label_to_val.get(option)
         if value is not None:
             await self.coordinator.async_set_volume(value)
+
+
+class TuyaBLEEnumSelect(TuyaBLELockEntity, SelectEntity, RestoreEntity):
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator, entry, cfg: dict, spec: dict):
+        self._attr_name = spec["name"]
+        self._attr_icon = spec["icon"]
+        self._state_key = spec["state_key"]
+        self._uid_suffix = spec["uid_suffix"]
+        self._dp = cfg.get("dp", spec["default_dp"])
+        raw_options = cfg.get("options", [])
+        super().__init__(coordinator, entry)
+        self._attr_options = [o.replace("_", " ").capitalize() for o in raw_options]
+        self._label_to_val = {
+            o.replace("_", " ").capitalize(): idx for idx, o in enumerate(raw_options)
+        }
+        self._val_to_label = {
+            idx: o.replace("_", " ").capitalize() for idx, o in enumerate(raw_options)
+        }
+
+    @property
+    def unique_id(self):
+        return f"{self._mac}_{self._uid_suffix}"
+
+    @property
+    def current_option(self) -> str | None:
+        val = self.coordinator.state.get(self._state_key)
+        if val is None:
+            return None
+        return self._val_to_label.get(val, f"unknown_{val}")
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self.coordinator.state.get(self._state_key) is None:
+            last = await self.async_get_last_state()
+            if last and last.state in self._label_to_val:
+                self.coordinator.state[self._state_key] = self._label_to_val[last.state]
+
+    async def async_select_option(self, option: str) -> None:
+        value = self._label_to_val.get(option)
+        if value is not None:
+            await self.coordinator.async_set_enum_dp(self._dp, value, self._state_key)

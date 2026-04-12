@@ -412,6 +412,16 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
             self.async_set_updated_data(self.state)
             self._reset_idle_timer()
 
+    async def async_set_enum_dp(self, dp: int, value: int, state_key: str) -> None:
+        """Send an enum DP value (type=4) and update state."""
+        async with self._op_lock:
+            await self._async_ensure_connected()
+            await self._session.async_send_dp(dp, 4, bytes([value]))
+            self.state[state_key] = value
+            await self._fetch_status()
+            self.async_set_updated_data(self.state)
+            self._reset_idle_timer()
+
     async def async_set_auto_lock_time(self, seconds: int) -> None:
         alt_cfg = self._profile.get("entities", {}).get("auto_lock_time_number")
         if not alt_cfg:

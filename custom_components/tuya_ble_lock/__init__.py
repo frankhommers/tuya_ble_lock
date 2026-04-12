@@ -44,7 +44,8 @@ def _platforms_for_devices(profiles: dict[str, dict]) -> list[Platform]:
     platforms = {Platform.LOCK, Platform.SENSOR, Platform.BUTTON, Platform.SWITCH}
     for profile in profiles.values():
         entities = profile.get("entities", {})
-        if "volume_select" in entities:
+        select_keys = ("volume_select", "language_select", "unlock_mode_select")
+        if any(k in entities for k in select_keys):
             platforms.add(Platform.SELECT)
         if "auto_lock_time_number" in entities:
             platforms.add(Platform.NUMBER)
