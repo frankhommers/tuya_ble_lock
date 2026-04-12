@@ -28,20 +28,92 @@ from .tuya_cloud import async_fetch_auth_key
 
 _LOGGER = logging.getLogger(__name__)
 
+# Country → (country_code, region, display_name)
+# Sorted by display name for the dropdown
+# Country → (country_code, region, display_name)
+COUNTRY_OPTIONS: dict[str, tuple[str, str, str]] = {
+    "nl": ("31", "eu", "Nederland"),
+    "be": ("32", "eu", "België"),
+    "de": ("49", "eu", "Deutschland"),
+    "fr": ("33", "eu", "France"),
+    "gb": ("44", "eu", "United Kingdom"),
+    "es": ("34", "eu", "España"),
+    "it": ("39", "eu", "Italia"),
+    "pt": ("351", "eu", "Portugal"),
+    "at": ("43", "eu", "Österreich"),
+    "ch": ("41", "eu", "Schweiz"),
+    "se": ("46", "eu", "Sverige"),
+    "no": ("47", "eu", "Norge"),
+    "dk": ("45", "eu", "Danmark"),
+    "fi": ("358", "eu", "Suomi"),
+    "pl": ("48", "eu", "Polska"),
+    "ie": ("353", "eu", "Ireland"),
+    "cz": ("420", "eu", "Česko"),
+    "ro": ("40", "eu", "România"),
+    "hu": ("36", "eu", "Magyarország"),
+    "gr": ("30", "eu", "Ελλάδα"),
+    "us": ("1", "us", "United States"),
+    "ca": ("1", "us", "Canada"),
+    "au": ("61", "us", "Australia"),
+    "nz": ("64", "nz", "New Zealand"),
+    "cn": ("86", "cn", "中国"),
+    "in": ("91", "in", "India"),
+    "jp": ("81", "us", "日本"),
+    "kr": ("82", "us", "대한민국"),
+    "br": ("55", "us", "Brasil"),
+    "mx": ("52", "us", "México"),
+    "za": ("27", "us", "South Africa"),
+    "tr": ("90", "eu", "Türkiye"),
+    "il": ("972", "eu", "Israel"),
+    "sg": ("65", "us", "Singapore"),
+    "my": ("60", "us", "Malaysia"),
+    "th": ("66", "us", "Thailand"),
+    "id": ("62", "us", "Indonesia"),
+    "ph": ("63", "us", "Philippines"),
+    "vn": ("84", "us", "Việt Nam"),
+    "other": ("", "", "Other (manual)"),
+}
+
+# Region dropdown options (display_name → api_value)
+REGION_OPTIONS: dict[str, str] = {
+    "Europe (EU)": "eu",
+    "Americas (US)": "us",
+    "China (CN)": "cn",
+    "India (IN)": "in",
+}
+
+
+def _country_choices() -> dict[str, str]:
+    """Sorted country choices for dropdown."""
+    return {k: v[2] for k, v in sorted(COUNTRY_OPTIONS.items(), key=lambda x: x[1][2])}
+
+
+def _build_cloud_schema(selected_country: str | None = None) -> vol.Schema:
+    """Build the login schema based on selected country."""
+    country = selected_country or "nl"
+    info = COUNTRY_OPTIONS.get(country, ("", "eu", ""))
+
+    # If "other", show manual country code + region dropdown
+    if country == "other":
+        return vol.Schema({
+            vol.Required(CONF_EMAIL): str,
+            vol.Required(CONF_PASSWORD): str,
+            vol.Required("country_code"): str,
+            vol.Required("region", default="Europe (EU)"): vol.In(list(REGION_OPTIONS.keys())),
+        })
+
+    # Normal country — region is auto-detected, only email + password needed
+    return vol.Schema({
+        vol.Required(CONF_EMAIL): str,
+        vol.Required(CONF_PASSWORD): str,
+    })
+
 
 def _decrypt_uuid(service_data: bytes, encrypted_id: bytes) -> str:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     key = hashlib.md5(service_data).digest()
     dec = Cipher(algorithms.AES(key), modes.CBC(key)).decryptor()
     return (dec.update(encrypted_id) + dec.finalize()).decode("ascii").rstrip("\x00")
-
-
-STEP_CLOUD_SCHEMA = vol.Schema({
-    vol.Required(CONF_EMAIL): str,
-    vol.Required(CONF_PASSWORD): str,
-    vol.Required("country_code", description={"suggested_value": "1"}): str,
-    vol.Required("region", default="us"): vol.In(["us", "eu", "cn", "in"]),
-})
 
 
 class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -55,6 +127,7 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._password = None
         self._country = None
         self._region = None
+        self._selected_country = None
 
     # ---- BLE discovery ----
 
@@ -89,7 +162,7 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # No hub entry yet — set unique_id and start cloud login
         await self.async_set_unique_id(self._mac)
         self._abort_if_unique_id_configured()
-        return await self.async_step_cloud_login()
+        return await self.async_step_select_country()
 
     async def _async_auto_add_device(self, entry, device_store):
         """Auto-add a discovered device using the hub's cloud credentials."""
@@ -161,14 +234,51 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # If hub already exists, abort
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
-        return await self.async_step_cloud_login()
+        return await self.async_step_select_country()
+
+    # ---- Step 1: Country selection ----
+
+    async def async_step_select_country(self, user_input=None):
+        """Select your country to auto-configure region and country code."""
+        errors = {}
+
+        if user_input:
+            self._selected_country = user_input["country"]
+            info = COUNTRY_OPTIONS.get(self._selected_country)
+
+            if self._selected_country == "other":
+                return await self.async_step_cloud_login()
+
+            if info:
+                self._country = info[0]
+                self._region = info[1]
+                return await self.async_step_cloud_login()
+
+            errors["base"] = "invalid_country"
+
+        return self.async_show_form(
+            step_id="select_country",
+            data_schema=vol.Schema({
+                vol.Required("country", default="nl"): vol.In(_country_choices()),
+            }),
+            errors=errors,
+        )
+
+    # ---- Step 2: Login ----
 
     async def async_step_cloud_login(self, user_input=None):
+        """Enter Tuya credentials. Region is auto-filled or shown as dropdown for 'Other'."""
+        errors = {}
+
         if user_input:
             self._email = user_input[CONF_EMAIL]
             self._password = user_input[CONF_PASSWORD]
-            self._country = user_input["country_code"]
-            self._region = user_input["region"]
+
+            # Handle "other" country — resolve region dropdown
+            if self._selected_country == "other":
+                self._country = user_input.get("country_code", "")
+                region_display = user_input.get("region", "Europe (EU)")
+                self._region = REGION_OPTIONS.get(region_display, "eu")
 
             # Validate credentials by attempting a cloud call
             try:
@@ -178,22 +288,22 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         self._password, self._country, self._region,
                         device_mac=self._mac or "",
                     )
-                    # If we got device data, store it
                     return await self._create_hub_with_device(cloud_result)
                 else:
-                    # No device discovered yet — just create hub with creds
                     return await self._create_hub_entry()
             except Exception:
-                _LOGGER.exception("Cloud login failed")
-                return self.async_show_form(
-                    step_id="cloud_login",
-                    data_schema=STEP_CLOUD_SCHEMA,
-                    errors={"base": "auth_key_failed"},
-                )
+                _LOGGER.warning("Cloud login failed", exc_info=True)
+                errors["base"] = "auth_key_failed"
 
+        schema = _build_cloud_schema(self._selected_country)
+        country_name = COUNTRY_OPTIONS.get(
+            self._selected_country or "nl", ("", "", "")
+        )[2]
         return self.async_show_form(
             step_id="cloud_login",
-            data_schema=STEP_CLOUD_SCHEMA,
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"country_name": country_name},
         )
 
     async def _create_hub_with_device(self, cloud_result: dict):
@@ -240,4 +350,4 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # ---- Reauth ----
 
     async def async_step_reauth(self, user_input=None):
-        return await self.async_step_cloud_login()
+        return await self.async_step_select_country()

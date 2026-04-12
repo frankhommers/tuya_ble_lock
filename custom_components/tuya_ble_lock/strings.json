@@ -1,13 +1,17 @@
 {
   "config": {
     "step": {
+      "select_country": {
+        "title": "Select Country",
+        "description": "Choose your country to automatically configure the correct Tuya cloud region and country code."
+      },
       "cloud_login": {
         "title": "Tuya Cloud Credentials",
-        "description": "Enter your Tuya Smart or Smart Life app credentials. These are used to fetch encryption keys for your locks. All discovered locks will be added automatically.",
+        "description": "Enter your Tuya Smart or Smart Life app credentials. These are used once to fetch encryption keys for your locks.\n\nRegion: {country_name}",
         "data": {
           "email": "Email",
           "password": "Password",
-          "country_code": "Country code",
+          "country_code": "Country code (e.g. 31)",
           "region": "Cloud region"
         }
       },
@@ -17,7 +21,7 @@
       }
     },
     "error": {
-      "auth_key_failed": "Could not connect to Tuya cloud. Check your credentials, country code, and region."
+      "auth_key_failed": "Could not connect to Tuya cloud. Check your credentials, country, and region."
     },
     "abort": {
       "already_configured": "This lock is already configured.",
