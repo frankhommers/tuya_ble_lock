@@ -29,9 +29,21 @@ from .tuya_cloud import async_fetch_auth_key
 _LOGGER = logging.getLogger(__name__)
 
 # Country → (country_code, region, display_name)
-# Sorted by display name for the dropdown
-# Country → (country_code, region, display_name)
+# Mappings from https://developer.tuya.com/en/docs/iot/oem-app-data-center-distributed
 COUNTRY_OPTIONS: dict[str, tuple[str, str, str]] = {
+    # Western America Data Center
+    "us": ("1", "us", "United States"),
+    "ca": ("1", "us", "Canada"),
+    # Eastern America Data Center (mapped to "us" region API)
+    "mx": ("52", "us", "México"),
+    "br": ("55", "us", "Brasil"),
+    "ar": ("54", "us", "Argentina"),
+    "cl": ("56", "us", "Chile"),
+    "co": ("57", "us", "Colombia"),
+    "pe": ("51", "us", "Perú"),
+    "ec": ("593", "us", "Ecuador"),
+    "nz": ("64", "us", "New Zealand"),
+    # Central Europe Data Center
     "nl": ("31", "eu", "Nederland"),
     "be": ("32", "eu", "België"),
     "de": ("49", "eu", "Deutschland"),
@@ -52,25 +64,43 @@ COUNTRY_OPTIONS: dict[str, tuple[str, str, str]] = {
     "ro": ("40", "eu", "România"),
     "hu": ("36", "eu", "Magyarország"),
     "gr": ("30", "eu", "Ελλάδα"),
-    "us": ("1", "us", "United States"),
-    "ca": ("1", "us", "Canada"),
-    "au": ("61", "us", "Australia"),
-    "nz": ("64", "nz", "New Zealand"),
-    "cn": ("86", "cn", "中国"),
-    "in": ("91", "in", "India"),
-    "jp": ("81", "us", "日本"),
-    "kr": ("82", "us", "대한민국"),
-    "br": ("55", "us", "Brasil"),
-    "mx": ("52", "us", "México"),
-    "za": ("27", "us", "South Africa"),
     "tr": ("90", "eu", "Türkiye"),
     "il": ("972", "eu", "Israel"),
-    "sg": ("65", "us", "Singapore"),
-    "my": ("60", "us", "Malaysia"),
-    "th": ("66", "us", "Thailand"),
-    "id": ("62", "us", "Indonesia"),
-    "ph": ("63", "us", "Philippines"),
-    "vn": ("84", "us", "Việt Nam"),
+    "za": ("27", "eu", "South Africa"),
+    "au": ("61", "eu", "Australia"),
+    "ru": ("7", "eu", "Russia"),
+    "ua": ("380", "eu", "Ukraine"),
+    "eg": ("20", "eu", "Egypt"),
+    "ng": ("234", "eu", "Nigeria"),
+    "ke": ("254", "eu", "Kenya"),
+    "pk": ("92", "eu", "Pakistan"),
+    "bd": ("880", "eu", "Bangladesh"),
+    "lk": ("94", "eu", "Sri Lanka"),
+    "np": ("977", "eu", "Nepal"),
+    "sa": ("966", "eu", "Saudi Arabia"),
+    "ae": ("971", "eu", "United Arab Emirates"),
+    "qa": ("974", "eu", "Qatar"),
+    "kw": ("965", "eu", "Kuwait"),
+    "jp": ("81", "eu", "日本"),
+    "kr": ("82", "eu", "대한민국"),
+    "mn": ("976", "eu", "Mongolia"),
+    # Singapore Data Center
+    "sg": ("65", "eu", "Singapore"),
+    "my": ("60", "eu", "Malaysia"),
+    "th": ("66", "eu", "Thailand"),
+    "id": ("62", "eu", "Indonesia"),
+    "ph": ("63", "eu", "Philippines"),
+    "vn": ("84", "eu", "Việt Nam"),
+    "mm": ("95", "eu", "Myanmar"),
+    "kh": ("855", "eu", "Cambodia"),
+    "la": ("856", "eu", "Laos"),
+    "bn": ("673", "eu", "Brunei"),
+    "hk": ("852", "eu", "Hong Kong"),
+    "tw": ("886", "eu", "Taiwan"),
+    # India Data Center
+    "in": ("91", "in", "India"),
+    # China Data Center
+    "cn": ("86", "cn", "中国"),
     "other": ("", "", "Other (manual)"),
 }
 
@@ -95,22 +125,29 @@ def _build_cloud_schema(selected_country: str | None = None) -> vol.Schema:
 
     # If "other", show manual country code + region dropdown
     if country == "other":
-        return vol.Schema({
-            vol.Required(CONF_EMAIL): str,
-            vol.Required(CONF_PASSWORD): str,
-            vol.Required("country_code"): str,
-            vol.Required("region", default="Europe (EU)"): vol.In(list(REGION_OPTIONS.keys())),
-        })
+        return vol.Schema(
+            {
+                vol.Required(CONF_EMAIL): str,
+                vol.Required(CONF_PASSWORD): str,
+                vol.Required("country_code"): str,
+                vol.Required("region", default="Europe (EU)"): vol.In(
+                    list(REGION_OPTIONS.keys())
+                ),
+            }
+        )
 
     # Normal country — region is auto-detected, only email + password needed
-    return vol.Schema({
-        vol.Required(CONF_EMAIL): str,
-        vol.Required(CONF_PASSWORD): str,
-    })
+    return vol.Schema(
+        {
+            vol.Required(CONF_EMAIL): str,
+            vol.Required(CONF_PASSWORD): str,
+        }
+    )
 
 
 def _decrypt_uuid(service_data: bytes, encrypted_id: bytes) -> str:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
     key = hashlib.md5(service_data).digest()
     dec = Cipher(algorithms.AES(key), modes.CBC(key)).decryptor()
     return (dec.update(encrypted_id) + dec.finalize()).decode("ascii").rstrip("\x00")
@@ -173,16 +210,25 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         region = creds.get(CONF_TUYA_REGION, "")
 
         if not email or not password:
-            _LOGGER.warning("Hub entry has no cloud credentials, cannot auto-add %s", self._mac)
+            _LOGGER.warning(
+                "Hub entry has no cloud credentials, cannot auto-add %s", self._mac
+            )
             return self.async_abort(reason="missing_credentials")
 
         try:
             cloud_result = await async_fetch_auth_key(
-                self.hass, self._uuid or "", email, password,
-                country, region, device_mac=self._mac or "",
+                self.hass,
+                self._uuid or "",
+                email,
+                password,
+                country,
+                region,
+                device_mac=self._mac or "",
             )
         except Exception:
-            _LOGGER.debug("Auto-add cloud fetch failed for %s", self._mac, exc_info=True)
+            _LOGGER.debug(
+                "Auto-add cloud fetch failed for %s", self._mac, exc_info=True
+            )
             return self.async_abort(reason="cloud_fetch_failed")
 
         auth_key = cloud_result.get("auth_key", "")
@@ -196,14 +242,17 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Device already bound to Tuya account — derive BLE credentials
             login_key = local_key[:6].encode()
             virtual_id = (device_id.encode() + b"\x00" * 22)[:22]
-            await device_store.async_add_device(self._mac, {
-                "uuid": uuid,
-                "login_key": login_key.hex(),
-                "virtual_id": virtual_id.hex(),
-                "auth_key": auth_key,
-                "product_id": product_id,
-                "name": name,
-            })
+            await device_store.async_add_device(
+                self._mac,
+                {
+                    "uuid": uuid,
+                    "login_key": login_key.hex(),
+                    "virtual_id": virtual_id.hex(),
+                    "auth_key": auth_key,
+                    "product_id": product_id,
+                    "name": name,
+                },
+            )
             _LOGGER.info("Auto-added device %s (%s) to hub", name, self._mac)
             # Reload entry to pick up new device
             await self.hass.config_entries.async_reload(entry.entry_id)
@@ -258,9 +307,11 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="select_country",
-            data_schema=vol.Schema({
-                vol.Required("country", default="nl"): vol.In(_country_choices()),
-            }),
+            data_schema=vol.Schema(
+                {
+                    vol.Required("country", default="nl"): vol.In(_country_choices()),
+                }
+            ),
             errors=errors,
         )
 
@@ -284,8 +335,12 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 if self._mac:
                     cloud_result = await async_fetch_auth_key(
-                        self.hass, self._uuid or "", self._email,
-                        self._password, self._country, self._region,
+                        self.hass,
+                        self._uuid or "",
+                        self._email,
+                        self._password,
+                        self._country,
+                        self._region,
                         device_mac=self._mac or "",
                     )
                     return await self._create_hub_with_device(cloud_result)
@@ -322,14 +377,17 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if local_key and device_id:
             login_key = local_key[:6].encode()
             virtual_id = (device_id.encode() + b"\x00" * 22)[:22]
-            await device_store.async_add_device(self._mac, {
-                "uuid": uuid,
-                "login_key": login_key.hex(),
-                "virtual_id": virtual_id.hex(),
-                "auth_key": auth_key,
-                "product_id": product_id,
-                "name": name,
-            })
+            await device_store.async_add_device(
+                self._mac,
+                {
+                    "uuid": uuid,
+                    "login_key": login_key.hex(),
+                    "virtual_id": virtual_id.hex(),
+                    "auth_key": auth_key,
+                    "product_id": product_id,
+                    "name": name,
+                },
+            )
 
         return await self._create_hub_entry()
 
