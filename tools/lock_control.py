@@ -37,20 +37,22 @@ import argparse
 from bleak import BleakClient, BleakScanner
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logging.getLogger("bleak").setLevel(logging.WARNING)
 log = logging.getLogger("lock")
 
 # Device config — fill in your own values
-DEFAULT_MAC = "AA:BB:CC:DD:EE:FF"
+DEFAULT_MAC = "DC:23:51:D1:85:77"
 FD50_WRITE = "00000001-0000-1001-8001-00805f9b07d0"
 FD50_NOTIFY = "00000002-0000-1001-8001-00805f9b07d0"
 
 # Credentials — derive from your Tuya cloud localKey and device_id:
 #   LOGIN_KEY = localKey[:6].encode()
 #   VIRTUAL_ID = device_id.encode() + b"\x00" * (22 - len(device_id))
-LOGIN_KEY = b""       # e.g. b"AbCdEf"
-VIRTUAL_ID = b"" + b"\x00" * 22  # e.g. b"your_device_id" + padding to 22 bytes
+LOGIN_KEY = b"<1'/fS"
+VIRTUAL_ID = b"bfd1faekehdxvras\x00\x00\x00\x00\x00\x00"
 
 # Tuya BLE commands
 CMD_DEVICE_INFO = 0x0000
@@ -67,39 +69,39 @@ DP_TYPES = {0: "RAW", 1: "BOOL", 2: "VALUE", 3: "STRING", 4: "ENUM", 5: "BITMAP"
 # Verified DPs for this device (jtmspro_2b_2, productId: qqmu5mit)
 # Source: Tuya cloud schema (device_schema.json)
 KNOWN_DPS = {
-    1: "unlock_method_create",      # RAW rw: enroll fingerprint/password/card/face
-    2: "unlock_method_delete",      # RAW rw: delete credential
-    3: "unlock_method_modify",      # RAW rw: modify credential schedule
-    8: "residual_electricity",      # VALUE ro: battery % (0-100)
-    9: "battery_state",             # ENUM ro: high/medium/low/exhausted
-    12: "unlock_fingerprint",       # VALUE ro: fingerprint unlock record
-    13: "unlock_password",          # VALUE ro: password unlock record
-    14: "unlock_dynamic",           # VALUE ro: dynamic password unlock record
-    15: "unlock_card",              # VALUE ro: card unlock record
-    18: "open_inside",              # BOOL ro: interior unlock event
-    19: "unlock_ble",               # VALUE ro: BLE unlock record
-    20: "lock_record",              # RAW ro: locking action records
-    21: "alarm_lock",               # ENUM ro: alarm events
-    24: "doorbell",                 # BOOL ro: doorbell ring event
-    31: "beep_volume",              # ENUM rw: mute(0), normal(1) — WARNING: mute disables motor!
-    33: "automatic_lock",           # BOOL rw: auto-lock enable/disable
-    44: "rtc_lock",                 # BOOL rw
-    46: "manual_lock",              # BOOL rw: manual lock command
-    47: "lock_motor_state",         # BOOL ro: false=locked, true=unlocked
-    51: "temporary_password_creat", # RAW rw: create temp password
-    52: "temporary_password_delete",# RAW rw: delete temp password
-    53: "temporary_password_modify",# RAW rw: modify temp password schedule
-    54: "synch_method",             # RAW rw: cloud<->device credential sync (NOT a query interface)
-    55: "unlock_temporary",         # VALUE ro: temp password unlock record
-    61: "remote_no_dp_key",         # RAW rw: remote unlock command
-    62: "unlock_phone_remote",      # VALUE ro: app remote unlock record
-    63: "unlock_voice_remote",      # VALUE ro: voice remote unlock record
-    69: "record",                   # RAW rw
-    70: "check_code_set",           # RAW rw
-    71: "ble_unlock_check",         # RAW rw: BLE unlock command
-    79: "electronic_double_lock",   # BOOL rw: electronic security lock
+    1: "unlock_method_create",  # RAW rw: enroll fingerprint/password/card/face
+    2: "unlock_method_delete",  # RAW rw: delete credential
+    3: "unlock_method_modify",  # RAW rw: modify credential schedule
+    8: "residual_electricity",  # VALUE ro: battery % (0-100)
+    9: "battery_state",  # ENUM ro: high/medium/low/exhausted
+    12: "unlock_fingerprint",  # VALUE ro: fingerprint unlock record
+    13: "unlock_password",  # VALUE ro: password unlock record
+    14: "unlock_dynamic",  # VALUE ro: dynamic password unlock record
+    15: "unlock_card",  # VALUE ro: card unlock record
+    18: "open_inside",  # BOOL ro: interior unlock event
+    19: "unlock_ble",  # VALUE ro: BLE unlock record
+    20: "lock_record",  # RAW ro: locking action records
+    21: "alarm_lock",  # ENUM ro: alarm events
+    24: "doorbell",  # BOOL ro: doorbell ring event
+    31: "beep_volume",  # ENUM rw: mute(0), normal(1) — WARNING: mute disables motor!
+    33: "automatic_lock",  # BOOL rw: auto-lock enable/disable
+    44: "rtc_lock",  # BOOL rw
+    46: "manual_lock",  # BOOL rw: manual lock command
+    47: "lock_motor_state",  # BOOL ro: false=locked, true=unlocked
+    51: "temporary_password_creat",  # RAW rw: create temp password
+    52: "temporary_password_delete",  # RAW rw: delete temp password
+    53: "temporary_password_modify",  # RAW rw: modify temp password schedule
+    54: "synch_method",  # RAW rw: cloud<->device credential sync (NOT a query interface)
+    55: "unlock_temporary",  # VALUE ro: temp password unlock record
+    61: "remote_no_dp_key",  # RAW rw: remote unlock command
+    62: "unlock_phone_remote",  # VALUE ro: app remote unlock record
+    63: "unlock_voice_remote",  # VALUE ro: voice remote unlock record
+    69: "record",  # RAW rw
+    70: "check_code_set",  # RAW rw
+    71: "ble_unlock_check",  # RAW rw: BLE unlock command
+    79: "electronic_double_lock",  # BOOL rw: electronic security lock
     # Non-standard / manufacturer-custom (observed in BLE reports)
-    520: "battery_custom",          # VALUE: battery % (0-100)
+    520: "battery_custom",  # VALUE: battery % (0-100)
 }
 
 # Volume level names — this device only supports mute(0) and normal(1)
@@ -163,7 +165,7 @@ def encrypt_frame(sn, ack_sn, cmd, data, key, sec_flag):
         if idx == 0:
             hdr += varint_encode(len(payload))
             hdr += bytes([0x40])  # version 4
-        chunk = payload[offset:offset + 20 - len(hdr)]
+        chunk = payload[offset : offset + 20 - len(hdr)]
         frags.append(hdr + chunk)
         offset += len(chunk)
         idx += 1
@@ -179,7 +181,13 @@ def decrypt_frame(payload, keys):
         # Unencrypted
         try:
             f = TuyaBleFrame.from_bytes(payload[1:])
-            return {"sec": 0, "sn": f.sn, "ack_sn": f.ack_sn, "cmd": f.code, "data": f.data}
+            return {
+                "sec": 0,
+                "sn": f.sn,
+                "ack_sn": f.ack_sn,
+                "cmd": f.code,
+                "data": f.data,
+            }
         except Exception:
             return None
     iv = payload[1:17]
@@ -197,7 +205,13 @@ def decrypt_frame(payload, keys):
         log.warning("Decrypt failed for sec=%d: %s", sec, exc)
         return None
     sn, ack_sn, cmd, dlen = struct.unpack(">IIHH", raw[:12])
-    return {"sec": sec, "sn": sn, "ack_sn": ack_sn, "cmd": cmd, "data": raw[12:12+dlen]}
+    return {
+        "sec": sec,
+        "sn": sn,
+        "ack_sn": ack_sn,
+        "cmd": cmd,
+        "data": raw[12 : 12 + dlen],
+    }
 
 
 def reassemble(fragments):
@@ -236,12 +250,12 @@ def parse_dp_report(data):
     dps = []
     pos = 0
     while pos + 5 <= len(klv):
-        dp_id = struct.unpack(">H", klv[pos:pos+2])[0]
-        dp_type = klv[pos+2]
-        dp_len = struct.unpack(">H", klv[pos+3:pos+5])[0]
+        dp_id = struct.unpack(">H", klv[pos : pos + 2])[0]
+        dp_type = klv[pos + 2]
+        dp_len = struct.unpack(">H", klv[pos + 3 : pos + 5])[0]
         if pos + 5 + dp_len > len(klv):
             break
-        val = klv[pos+5:pos+5+dp_len]
+        val = klv[pos + 5 : pos + 5 + dp_len]
         dps.append({"id": dp_id, "type": dp_type, "len": dp_len, "raw": val})
         pos += 5 + dp_len
     return dps
@@ -329,8 +343,17 @@ class LockSession:
                 elif cmd == CMD_TIME_V2:
                     t = time.localtime()
                     tz = -int(time.timezone / 36)
-                    td = struct.pack(">BBBBBBBh", t.tm_year % 100, t.tm_mon, t.tm_mday,
-                                     t.tm_hour, t.tm_min, t.tm_sec, t.tm_wday, tz)
+                    td = struct.pack(
+                        ">BBBBBBBh",
+                        t.tm_year % 100,
+                        t.tm_mon,
+                        t.tm_mday,
+                        t.tm_hour,
+                        t.tm_min,
+                        t.tm_sec,
+                        t.tm_wday,
+                        tz,
+                    )
                     await self.send(cmd, td, 5, ack_sn=f["sn"])
             except Exception as exc:
                 log.warning("Time response failed (BLE disconnected?): %s", exc)
@@ -422,7 +445,9 @@ async def connect_and_setup(mac, auth_key_hex=None):
         # Device info is UNENCRYPTED (sec_flag=0) for unbound devices.
         # Build and send manually since encrypt_frame always uses AES-CBC.
         session.notifs.clear()
-        inner = struct.pack(">IIHH", session.sn, 0, CMD_DEVICE_INFO, 2) + struct.pack(">H", 20)
+        inner = struct.pack(">IIHH", session.sn, 0, CMD_DEVICE_INFO, 2) + struct.pack(
+            ">H", 20
+        )
         inner += struct.pack(">H", crc16(inner))
         payload = bytes([0x00]) + inner  # sec_flag=0, no IV
         hdr = varint_encode(0) + varint_encode(len(payload)) + bytes([0x40])
@@ -441,7 +466,7 @@ async def connect_and_setup(mac, auth_key_hex=None):
         p = reassemble(raw)[0]
         inner = p[1:]  # skip sec_flag=0 byte
         sn_r, ack_sn_r, cmd_r, dlen = struct.unpack(">IIHH", inner[:12])
-        data = inner[12:12 + dlen]
+        data = inner[12 : 12 + dlen]
         log.info("Device info: cmd=0x%04X len=%d data=%s", cmd_r, dlen, data.hex())
 
         srand = data[6:12]
@@ -458,7 +483,11 @@ async def connect_and_setup(mac, auth_key_hex=None):
         # Try pairing with different security flags
         pair_success = False
         for try_flag in [2, 1, 0]:
-            log.info("Trying pair with sec_flag=%d, loginKey=%s", try_flag, new_login_key.hex())
+            log.info(
+                "Trying pair with sec_flag=%d, loginKey=%s",
+                try_flag,
+                new_login_key.hex(),
+            )
             if try_flag == 0:
                 # Unencrypted pair — build manually
                 session.notifs.clear()
@@ -475,7 +504,7 @@ async def connect_and_setup(mac, auth_key_hex=None):
                     if f_idx == 0:
                         fhdr += varint_encode(len(p_payload))
                         fhdr += bytes([0x40])
-                    chunk = p_payload[f_offset:f_offset + 20 - len(fhdr)]
+                    chunk = p_payload[f_offset : f_offset + 20 - len(fhdr)]
                     frags_to_send.append(fhdr + chunk)
                     f_offset += len(chunk)
                     f_idx += 1
@@ -494,28 +523,51 @@ async def connect_and_setup(mac, auth_key_hex=None):
                     # Try decrypting with the NEW session key (derived from new loginKey + srand)
                     new_session_key = hashlib.md5(new_login_key + srand).digest()
                     new_key4 = hashlib.md5(new_login_key).digest()
-                    trial_keys = {0: b'\x00' * 16, 4: new_key4, 5: new_session_key,
-                                  1: auth_key_bytes, 2: session.keys.get(2, b'\x00' * 16)}
+                    trial_keys = {
+                        0: b"\x00" * 16,
+                        4: new_key4,
+                        5: new_session_key,
+                        1: auth_key_bytes,
+                        2: session.keys.get(2, b"\x00" * 16),
+                    }
                     for mi, p0 in enumerate(p_msgs):
                         sec_byte = p0[0]
-                        log.info("  msg[%d]: sec_flag=%d len=%d hex=%s",
-                                 mi, sec_byte, len(p0), p0.hex()[:80])
+                        log.info(
+                            "  msg[%d]: sec_flag=%d len=%d hex=%s",
+                            mi,
+                            sec_byte,
+                            len(p0),
+                            p0.hex()[:80],
+                        )
                         if sec_byte == 0:
                             # Unencrypted response
                             p_inner_r = p0[1:]
                             if len(p_inner_r) >= 12:
-                                _, _, cmd_r, dlen_r = struct.unpack(">IIHH", p_inner_r[:12])
-                                d = p_inner_r[12:12 + dlen_r]
-                                log.info("    cmd=0x%04X data=%s", cmd_r, d.hex() if d else "")
+                                _, _, cmd_r, dlen_r = struct.unpack(
+                                    ">IIHH", p_inner_r[:12]
+                                )
+                                d = p_inner_r[12 : 12 + dlen_r]
+                                log.info(
+                                    "    cmd=0x%04X data=%s",
+                                    cmd_r,
+                                    d.hex() if d else "",
+                                )
                                 if cmd_r == CMD_PAIR and d and d[0] == 0:
                                     pair_success = True
                         else:
                             # Encrypted — try all keys
                             f = decrypt_frame(p0, trial_keys)
                             if f:
-                                log.info("    Decrypted: cmd=0x%04X data=%s",
-                                         f["cmd"], f["data"].hex() if f["data"] else "")
-                                if f["cmd"] == CMD_PAIR and f["data"] and f["data"][0] == 0:
+                                log.info(
+                                    "    Decrypted: cmd=0x%04X data=%s",
+                                    f["cmd"],
+                                    f["data"].hex() if f["data"] else "",
+                                )
+                                if (
+                                    f["cmd"] == CMD_PAIR
+                                    and f["data"]
+                                    and f["data"][0] == 0
+                                ):
                                     pair_success = True
                             else:
                                 log.info("    Could not decrypt (tried all keys)")
@@ -528,22 +580,33 @@ async def connect_and_setup(mac, auth_key_hex=None):
                     log.info("  Skipping sec_flag=%d (no key)", try_flag)
                     continue
                 session.notifs.clear()
-                frames = await session.send_recv(CMD_PAIR, pair_data, sec_flag=try_flag, wait=8.0)
+                frames = await session.send_recv(
+                    CMD_PAIR, pair_data, sec_flag=try_flag, wait=8.0
+                )
                 if frames:
                     status = frames[0]["data"][0] if frames[0]["data"] else -1
-                    log.info("  Pair status: %d (%s)", status,
-                             {0: "OK", 2: "ALREADY_BOUND"}.get(status, "ERROR"))
+                    log.info(
+                        "  Pair status: %d (%s)",
+                        status,
+                        {0: "OK", 2: "ALREADY_BOUND"}.get(status, "ERROR"),
+                    )
                     if status == 0:
                         pair_success = True
-                        await session.handle_time_requests(frames[1:] if len(frames) > 1 else [])
+                        await session.handle_time_requests(
+                            frames[1:] if len(frames) > 1 else []
+                        )
                         break
-                    await session.handle_time_requests(frames[1:] if len(frames) > 1 else [])
+                    await session.handle_time_requests(
+                        frames[1:] if len(frames) > 1 else []
+                    )
                 else:
                     # Check raw notifications (maybe decrypt failed)
                     raw_resp = list(session.notifs)
                     session.notifs.clear()
                     if raw_resp:
-                        log.info("  Got %d raw notifs but decrypt failed", len(raw_resp))
+                        log.info(
+                            "  Got %d raw notifs but decrypt failed", len(raw_resp)
+                        )
                         for rn in raw_resp:
                             log.info("    raw: %s", rn.hex())
                     else:
@@ -551,8 +614,8 @@ async def connect_and_setup(mac, auth_key_hex=None):
 
         if pair_success:
             log.info("=== PAIR SUCCESS! NEW CREDENTIALS ===")
-            log.info("LOGIN_KEY = bytes.fromhex(\"%s\")", new_login_key.hex())
-            log.info("VIRTUAL_ID = bytes.fromhex(\"%s\")", new_virtual_id.hex())
+            log.info('LOGIN_KEY = bytes.fromhex("%s")', new_login_key.hex())
+            log.info('VIRTUAL_ID = bytes.fromhex("%s")', new_virtual_id.hex())
             session.login_key = new_login_key
             session.keys[4] = hashlib.md5(new_login_key).digest()
             session.derive_session(srand)
@@ -561,7 +624,9 @@ async def connect_and_setup(mac, auth_key_hex=None):
             return None, None
     else:
         # --- Reconnect using stored LOGIN_KEY ---
-        frames = await session.send_recv(CMD_DEVICE_INFO, struct.pack(">H", 20), sec_flag=4)
+        frames = await session.send_recv(
+            CMD_DEVICE_INFO, struct.pack(">H", 20), sec_flag=4
+        )
         if not frames:
             log.error("No device info response!")
             return None, None
@@ -578,8 +643,11 @@ async def connect_and_setup(mac, auth_key_hex=None):
         frames = await session.send_recv(CMD_PAIR, pair_data, sec_flag=5)
         if frames:
             status = frames[0]["data"][0] if frames[0]["data"] else -1
-            log.info("Pair status: %d (%s)", status,
-                     {0: "OK", 2: "ALREADY_BOUND"}.get(status, "ERROR"))
+            log.info(
+                "Pair status: %d (%s)",
+                status,
+                {0: "OK", 2: "ALREADY_BOUND"}.get(status, "ERROR"),
+            )
             await session.handle_time_requests(frames[1:] if len(frames) > 1 else [])
 
     # Collect any unsolicited messages
@@ -591,7 +659,7 @@ async def connect_and_setup(mac, auth_key_hex=None):
 
 def build_v4_dp(dp_id, dp_type, value):
     """Build V4 DP write payload: [version(1)][reserved(4)][dp_id(1)][type(1)][len(2)][value]."""
-    header = b'\x00\x00\x00\x00\x00'
+    header = b"\x00\x00\x00\x00\x00"
     return header + struct.pack(">BBH", dp_id & 0xFF, dp_type, len(value)) + value
 
 
@@ -600,7 +668,7 @@ async def send_dp_and_report(session, dp_data, label):
     frames = await session.send_recv(CMD_DP_WRITE_V4, dp_data, sec_flag=5)
     if frames:
         resp = frames[0]
-        ok = resp["data"] == b'\x00\x00\x00\x00\x00\x00'
+        ok = resp["data"] == b"\x00\x00\x00\x00\x00\x00"
         log.info("%s: %s", label, "SUCCESS" if ok else f"response={resp['data'].hex()}")
         await session.handle_time_requests(frames[1:])
     else:
@@ -615,12 +683,12 @@ async def send_dp_and_report(session, dp_data, label):
 
 async def do_unlock(session):
     """Send unlock command (DP 1 = BOOL TRUE)."""
-    await send_dp_and_report(session, build_v4_dp(1, 1, b'\x01'), "Unlock")
+    await send_dp_and_report(session, build_v4_dp(1, 1, b"\x01"), "Unlock")
 
 
 async def do_lock(session):
     """Send lock command (DP 1 = BOOL FALSE)."""
-    await send_dp_and_report(session, build_v4_dp(1, 1, b'\x00'), "Lock")
+    await send_dp_and_report(session, build_v4_dp(1, 1, b"\x00"), "Lock")
 
 
 # -- DP 71 (ble_unlock_check) unlock/lock -------
@@ -641,13 +709,13 @@ def build_dp71_payload(action_unlock=True, check_code=None, member_id=0xFFFF):
     if isinstance(code, str):
         code = code.encode()
     # Pad or truncate to 8 bytes
-    code = (code + b'\x00' * 8)[:8]
+    code = (code + b"\x00" * 8)[:8]
     ts = int(time.time())
     payload = struct.pack(">HH", 1, member_id)  # version=1, member_id
-    payload += code                               # 8-byte check code
+    payload += code  # 8-byte check code
     payload += bytes([0x01 if action_unlock else 0x00])  # action
-    payload += struct.pack(">I", ts)              # timestamp
-    payload += b'\x00\x00'                        # padding
+    payload += struct.pack(">I", ts)  # timestamp
+    payload += b"\x00\x00"  # padding
     return payload
 
 
@@ -667,32 +735,37 @@ async def do_lock_dp71(session, check_code=None):
 
 async def do_auto_lock(session, on):
     """Enable/disable auto-lock (DP 33 = BOOL)."""
-    await send_dp_and_report(session, build_v4_dp(33, 1, b'\x01' if on else b'\x00'),
-                             f"Auto-lock {'ON' if on else 'OFF'}")
+    await send_dp_and_report(
+        session,
+        build_v4_dp(33, 1, b"\x01" if on else b"\x00"),
+        f"Auto-lock {'ON' if on else 'OFF'}",
+    )
 
 
 async def do_volume(session, level):
     """Set beep volume (DP 31 = ENUM). WARNING: mute(0) disables motor on this firmware!"""
     val = struct.pack(">B", VOLUME_LEVELS[level])
-    await send_dp_and_report(session, build_v4_dp(31, 4, val),
-                             f"Volume {level}")
+    await send_dp_and_report(session, build_v4_dp(31, 4, val), f"Volume {level}")
 
 
 async def do_double_lock(session, on):
     """Enable/disable electronic double lock (DP 79 = BOOL)."""
-    await send_dp_and_report(session, build_v4_dp(79, 1, b'\x01' if on else b'\x00'),
-                             f"Double lock {'ON' if on else 'OFF'}")
+    await send_dp_and_report(
+        session,
+        build_v4_dp(79, 1, b"\x01" if on else b"\x00"),
+        f"Double lock {'ON' if on else 'OFF'}",
+    )
 
 
 async def do_raw_dp(session, dp_id, dp_type, value_hex):
     """Write an arbitrary DP."""
     val = bytes.fromhex(value_hex)
-    await send_dp_and_report(session, build_v4_dp(dp_id, dp_type, val),
-                             f"DP {dp_id} (type={dp_type})")
+    await send_dp_and_report(
+        session, build_v4_dp(dp_id, dp_type, val), f"DP {dp_id} (type={dp_type})"
+    )
 
 
 CRED_TYPE_NAMES = {0x01: "password", 0x02: "card", 0x03: "fingerprint", 0x04: "face"}
-
 
 
 # -- Credential enrollment --------------------------------------------------
@@ -708,8 +781,11 @@ STAGE_CANCEL = 0xFE
 STAGE_DONE = 0xFF
 
 STAGE_NAMES = {
-    0x00: "STARTED", 0xFC: "IN_PROGRESS", 0xFD: "FAILED",
-    0xFE: "CANCELLED", 0xFF: "COMPLETE",
+    0x00: "STARTED",
+    0xFC: "IN_PROGRESS",
+    0xFD: "FAILED",
+    0xFE: "CANCELLED",
+    0xFF: "COMPLETE",
 }
 
 
@@ -719,12 +795,12 @@ def build_validity_permanent():
     Permanent access: 2000-01-01 to 2030-12-31, no recurrence.
     """
     return (
-        struct.pack(">I", 0x386CD300)   # start: 2000-01-01 00:00:00 UTC
-        + struct.pack(">I", 0x72BC9B7F) # end:   2030-12-31 23:59:59 UTC
-        + b'\x00'                        # pattern: no recurrence
-        + b'\x00\x00\x00\x00'           # recurring bits: none
-        + b'\x00\x00'                    # period start: 00:00
-        + b'\x17\x3b'                    # period end: 23:59
+        struct.pack(">I", 0x386CD300)  # start: 2000-01-01 00:00:00 UTC
+        + struct.pack(">I", 0x72BC9B7F)  # end:   2030-12-31 23:59:59 UTC
+        + b"\x00"  # pattern: no recurrence
+        + b"\x00\x00\x00\x00"  # recurring bits: none
+        + b"\x00\x00"  # period start: 00:00
+        + b"\x17\x3b"  # period end: 23:59
     )
 
 
@@ -739,19 +815,23 @@ def build_enroll_payload(cred_type, member_id, admin=False, password_digits=None
         admin: True for admin credential
         password_digits: list of ints 0-9 for password type, None otherwise
     """
-    pwd = bytes(password_digits) if password_digits else b''
-    payload = bytes([
-        cred_type,
-        STAGE_START,
-        0x01 if admin else 0x00,
-        member_id & 0xFF,
-        0xFF,  # hardware ID: auto-assign
-    ])
+    pwd = bytes(password_digits) if password_digits else b""
+    payload = bytes(
+        [
+            cred_type,
+            STAGE_START,
+            0x01 if admin else 0x00,
+            member_id & 0xFF,
+            0xFF,  # hardware ID: auto-assign
+        ]
+    )
     payload += build_validity_permanent()
-    payload += bytes([
-        0x00,       # times: permanent
-        len(pwd),   # password length
-    ])
+    payload += bytes(
+        [
+            0x00,  # times: permanent
+            len(pwd),  # password length
+        ]
+    )
     payload += pwd
     return payload
 
@@ -780,7 +860,7 @@ async def send_sync_marker(session):
 
     Sends 0x030102 before biometric enrollment to prepare the lock.
     """
-    dp_data = build_v4_dp(54, 0, b'\x03\x01\x02')  # DP 54, type RAW
+    dp_data = build_v4_dp(54, 0, b"\x03\x01\x02")  # DP 54, type RAW
     log.debug("Sending DP 54 sync marker (030102)")
     frames = await session.send_recv(CMD_DP_WRITE_V4, dp_data, sec_flag=5, wait=3.0)
     for f in frames:
@@ -796,8 +876,12 @@ async def do_add_pin(session, member_id, digits, admin=False):
         if d < 0 or d > 9:
             log.error("PIN digits must be 0-9")
             return
-    payload = build_enroll_payload(0x01, member_id, admin=admin, password_digits=pin_bytes)
-    log.info("Adding PIN for member %d: %s (%d digits)", member_id, digits, len(pin_bytes))
+    payload = build_enroll_payload(
+        0x01, member_id, admin=admin, password_digits=pin_bytes
+    )
+    log.info(
+        "Adding PIN for member %d: %s (%d digits)", member_id, digits, len(pin_bytes)
+    )
     dp_data = build_v4_dp(1, 0, payload)  # dp_type=0 (RAW)
     frames = await session.send_recv(CMD_DP_WRITE_V4, dp_data, sec_flag=5, wait=10.0)
 
@@ -911,14 +995,16 @@ async def do_add_card(session, member_id, admin=False):
 
 async def do_delete_method(session, member_id, cred_type, hw_id):
     """Delete a credential from the lock (DP 2 = RAW)."""
-    payload = bytes([
-        cred_type,
-        0x00,       # stage
-        0x00,       # admin flag
-        member_id & 0xFF,
-        hw_id & 0xFF,
-        0x01,       # deletion method: single
-    ])
+    payload = bytes(
+        [
+            cred_type,
+            0x00,  # stage
+            0x00,  # admin flag
+            member_id & 0xFF,
+            hw_id & 0xFF,
+            0x01,  # deletion method: single
+        ]
+    )
     type_name = {v: k for k, v in CRED_TYPES}.get(cred_type, f"type={cred_type}")
     log.info("Deleting %s for member %d, hw_id %d", type_name, member_id, hw_id)
     dp_data = build_v4_dp(2, 0, payload)  # DP 2, type RAW
@@ -944,7 +1030,7 @@ def parse_sync_bitmap(raw):
     Each partition holds 8 credential slots.
     Credential index = (partition_id - 1) * 8 + bit_position.
     """
-    if len(raw) < 2 or raw == b'\x00\x00':
+    if len(raw) < 2 or raw == b"\x00\x00":
         return []
     creds = []
     pos = 0
@@ -977,7 +1063,9 @@ async def do_sync(session, cred_type_name=None):
 
         # Write single ins byte to DP 54
         dp_data = build_v4_dp(54, 0, bytes([utype]))
-        frames = await session.send_recv(CMD_DP_WRITE_V4, dp_data, sec_flag=5, wait=10.0)
+        frames = await session.send_recv(
+            CMD_DP_WRITE_V4, dp_data, sec_flag=5, wait=10.0
+        )
 
         for f in frames:
             cmd = f["cmd"]
@@ -992,8 +1080,12 @@ async def do_sync(session, cred_type_name=None):
             elif cmd in (CMD_TIME_V1, CMD_TIME_V2):
                 await session.handle_time_requests([f])
             else:
-                log.info("  Frame cmd=0x%04X len=%d data=%s",
-                         cmd, len(data), data.hex()[:120])
+                log.info(
+                    "  Frame cmd=0x%04X len=%d data=%s",
+                    cmd,
+                    len(data),
+                    data.hex()[:120],
+                )
 
         # Collect additional reports with extended timeout
         reports = await session.collect(timeout=8.0)
@@ -1008,8 +1100,12 @@ async def do_sync(session, cred_type_name=None):
                         if creds:
                             log.info("    -> Credential slots: %s", creds)
             elif cmd not in (CMD_TIME_V1, CMD_TIME_V2):
-                log.info("  Frame cmd=0x%04X len=%d data=%s",
-                         cmd, len(data), data.hex()[:120])
+                log.info(
+                    "  Frame cmd=0x%04X len=%d data=%s",
+                    cmd,
+                    len(data),
+                    data.hex()[:120],
+                )
 
 
 async def do_listen(session, duration_minutes=10):
@@ -1048,8 +1144,12 @@ async def do_listen(session, duration_minutes=10):
             for p in payloads:
                 f = decrypt_frame(p, session.keys)
                 if not f:
-                    log.info("[%5.0fs] Undecryptable frame: %d bytes, hex=%s",
-                             elapsed, len(p), p.hex()[:60])
+                    log.info(
+                        "[%5.0fs] Undecryptable frame: %d bytes, hex=%s",
+                        elapsed,
+                        len(p),
+                        p.hex()[:60],
+                    )
                     continue
 
                 cmd = f["cmd"]
@@ -1057,8 +1157,12 @@ async def do_listen(session, duration_minutes=10):
                 ts_str = time.strftime("%H:%M:%S")
 
                 if cmd in (CMD_TIME_V1, CMD_TIME_V2):
-                    log.info("[%5.0fs] %s Time request (cmd=0x%04X) — responding",
-                             elapsed, ts_str, cmd)
+                    log.info(
+                        "[%5.0fs] %s Time request (cmd=0x%04X) — responding",
+                        elapsed,
+                        ts_str,
+                        cmd,
+                    )
                     await session.handle_time_requests([f])
                 elif cmd == CMD_DP_REPORT_V4:
                     dps = parse_dp_report(data)
@@ -1066,19 +1170,38 @@ async def do_listen(session, duration_minutes=10):
                         report_count += 1
                         dp_id = dp["id"]
                         val_str = format_dp(dp)
-                        log.info("[%5.0fs] %s DP REPORT #%d: %s",
-                                 elapsed, ts_str, report_count, val_str)
+                        log.info(
+                            "[%5.0fs] %s DP REPORT #%d: %s",
+                            elapsed,
+                            ts_str,
+                            report_count,
+                            val_str,
+                        )
                         if dp_id not in dp_seen:
                             dp_seen[dp_id] = []
                         dp_seen[dp_id].append((elapsed, dp["raw"].hex()))
                 else:
-                    log.info("[%5.0fs] %s Frame cmd=0x%04X len=%d data=%s",
-                             elapsed, ts_str, cmd, len(data), data.hex()[:80])
+                    log.info(
+                        "[%5.0fs] %s Frame cmd=0x%04X len=%d data=%s",
+                        elapsed,
+                        ts_str,
+                        cmd,
+                        len(data),
+                        data.hex()[:80],
+                    )
 
             # Periodic status line every 60s
-            if int(elapsed) % 60 == 0 and int(elapsed) > 0 and elapsed - int(elapsed) < 0.6:
-                log.info("[%5.0fs] Still listening... %d reports so far, DPs seen: %s",
-                         elapsed, report_count, list(dp_seen.keys()) if dp_seen else "none")
+            if (
+                int(elapsed) % 60 == 0
+                and int(elapsed) > 0
+                and elapsed - int(elapsed) < 0.6
+            ):
+                log.info(
+                    "[%5.0fs] Still listening... %d reports so far, DPs seen: %s",
+                    elapsed,
+                    report_count,
+                    list(dp_seen.keys()) if dp_seen else "none",
+                )
 
     except KeyboardInterrupt:
         log.info("Interrupted by user")
@@ -1133,18 +1256,32 @@ async def do_listen_test(session):
                     for dp in parse_dp_report(data):
                         report_count += 1
                         dp_id = dp["id"]
-                        log.info("[%5.0fs] %s DP REPORT #%d: %s",
-                                 elapsed, label, report_count, format_dp(dp))
+                        log.info(
+                            "[%5.0fs] %s DP REPORT #%d: %s",
+                            elapsed,
+                            label,
+                            report_count,
+                            format_dp(dp),
+                        )
                         if dp_id not in dp_seen:
                             dp_seen[dp_id] = []
                         dp_seen[dp_id].append((elapsed, dp["raw"].hex()))
                 elif cmd == CMD_DP_WRITE_V4:
-                    ok = data == b'\x00\x00\x00\x00\x00\x00'
-                    log.info("[%5.0fs] %s CMD response: %s", elapsed, label,
-                             "SUCCESS" if ok else data.hex())
+                    ok = data == b"\x00\x00\x00\x00\x00\x00"
+                    log.info(
+                        "[%5.0fs] %s CMD response: %s",
+                        elapsed,
+                        label,
+                        "SUCCESS" if ok else data.hex(),
+                    )
                 else:
-                    log.info("[%5.0fs] %s Frame cmd=0x%04X data=%s",
-                             elapsed, label, cmd, data.hex()[:80])
+                    log.info(
+                        "[%5.0fs] %s Frame cmd=0x%04X data=%s",
+                        elapsed,
+                        label,
+                        cmd,
+                        data.hex()[:80],
+                    )
 
     log.info("=== LISTEN-TEST: unlock/lock with state observation ===")
 
@@ -1171,7 +1308,9 @@ async def do_listen_test(session):
     await drain_and_log("AFTER_LOCK", 60)
 
     elapsed = time.time() - start
-    log.info("=== LISTEN-TEST COMPLETE: %.0fs, %d DP reports ===", elapsed, report_count)
+    log.info(
+        "=== LISTEN-TEST COMPLETE: %.0fs, %d DP reports ===", elapsed, report_count
+    )
     if dp_seen:
         log.info("Summary of DPs received:")
         for dp_id, entries in sorted(dp_seen.items()):
@@ -1208,20 +1347,53 @@ async def do_status(session):
 
 async def main():
     parser = argparse.ArgumentParser(description="Tuya BLE Lock Control")
-    parser.add_argument("action",
-                        choices=["pair", "unlock", "lock", "unlock71", "lock71",
-                                 "status", "listen", "listen-test", "sync",
-                                 "auto-lock", "volume", "double-lock",
-                                 "add-pin", "add-fingerprint", "add-card", "delete-method", "dp"],
-                        help="Action to perform")
-    parser.add_argument("value", nargs="?", default=None,
-                        help="Value for the action (on/off, seconds, volume level, member_id, etc.)")
-    parser.add_argument("extra", nargs="*",
-                        help="Extra args: PIN digits for add-pin, TYPE HW_ID for delete-method, etc.")
+    parser.add_argument(
+        "action",
+        choices=[
+            "pair",
+            "unlock",
+            "lock",
+            "unlock71",
+            "lock71",
+            "status",
+            "listen",
+            "listen-test",
+            "sync",
+            "auto-lock",
+            "volume",
+            "double-lock",
+            "add-pin",
+            "add-fingerprint",
+            "add-card",
+            "delete-method",
+            "dp",
+        ],
+        help="Action to perform",
+    )
+    parser.add_argument(
+        "value",
+        nargs="?",
+        default=None,
+        help="Value for the action (on/off, seconds, volume level, member_id, etc.)",
+    )
+    parser.add_argument(
+        "extra",
+        nargs="*",
+        help="Extra args: PIN digits for add-pin, TYPE HW_ID for delete-method, etc.",
+    )
     parser.add_argument("--mac", default=DEFAULT_MAC, help="Device MAC address")
-    parser.add_argument("--auth-key", type=str, help="Auth key hex for first activation pairing")
-    parser.add_argument("--admin", action="store_true", help="Set admin flag for credential enrollment")
-    parser.add_argument("--duration", type=int, default=2, help="Listen duration in minutes (default: 2)")
+    parser.add_argument(
+        "--auth-key", type=str, help="Auth key hex for first activation pairing"
+    )
+    parser.add_argument(
+        "--admin", action="store_true", help="Set admin flag for credential enrollment"
+    )
+    parser.add_argument(
+        "--duration",
+        type=int,
+        default=2,
+        help="Listen duration in minutes (default: 2)",
+    )
     args = parser.parse_args()
 
     # Validate args for commands that need a value
@@ -1234,7 +1406,9 @@ async def main():
             parser.error(f"volume requires one of: {', '.join(VOLUME_LEVELS)}")
     elif args.action == "add-pin":
         if args.value is None or not args.extra:
-            parser.error("add-pin requires: MEMBER_ID PIN_DIGITS (e.g., add-pin 1 123456)")
+            parser.error(
+                "add-pin requires: MEMBER_ID PIN_DIGITS (e.g., add-pin 1 123456)"
+            )
         if not args.extra[0].isdigit():
             parser.error("PIN must be numeric digits")
     elif args.action in ("add-fingerprint", "add-card"):
@@ -1242,11 +1416,15 @@ async def main():
             parser.error(f"{args.action} requires: MEMBER_ID (e.g., {args.action} 1)")
     elif args.action == "delete-method":
         if args.value is None or len(args.extra) < 2:
-            parser.error("delete-method requires: MEMBER_ID TYPE HW_ID "
-                         "(TYPE: password/card/fingerprint/face, e.g., delete-method 1 password 0)")
+            parser.error(
+                "delete-method requires: MEMBER_ID TYPE HW_ID "
+                "(TYPE: password/card/fingerprint/face, e.g., delete-method 1 password 0)"
+            )
     elif args.action == "sync":
         if args.value and args.value not in CRED_TYPES:
-            parser.error(f"sync type must be one of: {', '.join(CRED_TYPES)} (or omit for all)")
+            parser.error(
+                f"sync type must be one of: {', '.join(CRED_TYPES)} (or omit for all)"
+            )
     elif args.action == "dp":
         if args.value is None or len(args.extra) < 2:
             parser.error("dp requires: DP_ID TYPE VALUE_HEX (e.g., dp 33 1 01)")
@@ -1258,7 +1436,9 @@ async def main():
 
     async def run_action(session):
         if args.action == "pair":
-            log.info("Pairing complete — update LOGIN_KEY and VIRTUAL_ID in this script")
+            log.info(
+                "Pairing complete — update LOGIN_KEY and VIRTUAL_ID in this script"
+            )
             return
         elif args.action == "unlock":
             await do_unlock(session)
@@ -1291,15 +1471,20 @@ async def main():
         elif args.action == "delete-method":
             ctype = CRED_TYPES.get(args.extra[0])
             if ctype is None:
-                log.error("Unknown type '%s'. Use: %s", args.extra[0], ", ".join(CRED_TYPES))
+                log.error(
+                    "Unknown type '%s'. Use: %s", args.extra[0], ", ".join(CRED_TYPES)
+                )
                 return
             await do_delete_method(session, int(args.value), ctype, int(args.extra[1]))
         elif args.action == "sync":
-            await do_sync(session, args.value)  # value = credential type name or None for all
+            await do_sync(
+                session, args.value
+            )  # value = credential type name or None for all
         elif args.action == "dp":
             await do_raw_dp(session, int(args.value), int(args.extra[0]), args.extra[1])
 
     from bleak.exc import BleakError
+
     for attempt in range(3):
         client, session = await connect_and_setup(args.mac, auth_key_hex=auth_key_hex)
         if not client or not session:
