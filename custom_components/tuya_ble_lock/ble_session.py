@@ -186,8 +186,8 @@ class TuyaBLELockSession:
         )
         for i, w in enumerate(writes):
             _LOGGER.debug("  frag[%d]: len=%d hex=%s", i, len(w), w.hex())
-            await self._client.write_gatt_char(self._write_uuid, w, response=True)
-            await asyncio.sleep(0.05)
+            await self._client.write_gatt_char(self._write_uuid, w, response=False)
+            await asyncio.sleep(0.1)
 
     async def _send_recv(
         self, cmd: int, data: bytes, sec_flag: int, wait: float = 8.0
@@ -433,7 +433,18 @@ class TuyaBLELockSession:
                 self._notif_buf.clear()
 
                 if not got_data:
-                    # No auto-push: try device info with multiple sec_flags
+                    # Diagnostic: try reading char 3 to check proxy relay
+                    read_uuid = "00000003-0000-1001-8001-00805f9b07d0"
+                    try:
+                        read_data = await self._client.read_gatt_char(read_uuid)
+                        _LOGGER.debug(
+                            "GATT READ char3: %s",
+                            read_data.hex() if read_data else "empty",
+                        )
+                    except Exception as exc:
+                        _LOGGER.debug("GATT READ char3 failed: %s", exc)
+
+                    # Try device info with multiple sec_flags
                     for try_sec in [SEC_LOGIN_KEY, SEC_NONE]:
                         _LOGGER.debug("Sending device info (sec_flag=%d)", try_sec)
                         self._notif_buf.clear()
@@ -449,6 +460,17 @@ class TuyaBLELockSession:
                         if raw:
                             _LOGGER.debug("Got response with sec_flag=%d", try_sec)
                             break
+                        # Also try reading char 3 after write
+                        try:
+                            read_data = await self._client.read_gatt_char(read_uuid)
+                            if read_data and len(read_data) > 0:
+                                _LOGGER.debug(
+                                    "GATT READ char3 after write: %s", read_data.hex()
+                                )
+                                raw = [read_data]
+                                break
+                        except Exception:
+                            pass
 
                 if not raw:
                     _LOGGER.debug("No device info response on attempt %d", attempt + 1)
