@@ -30,8 +30,9 @@
       },
       "reconfigure": {
         "title": "Reconfigure Tuya account",
-        "description": "Enter the Tuya password for {email}. This refreshes the stored cloud credentials and the BLE keys for every lock on the hub.",
+        "description": "Update your Tuya cloud credentials. Email is prefilled with the current value — change it if you moved to a different account. Refreshes BLE keys for every lock on the hub.",
         "data": {
+          "email": "Email",
           "password": "Password"
         }
       }

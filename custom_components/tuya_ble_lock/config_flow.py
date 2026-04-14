@@ -445,8 +445,8 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(self, user_input=None):
         """Manual 'Reconfigure' entry (HA hub ⋮ menu).
 
-        Always prompts for the Tuya password — the whole point of
-        Reconfigure is that the stored one no longer works.
+        Prompts for both email and password, email prepopulated with the
+        currently-stored value so the user can change the account too.
         """
         from .tuya_cloud import async_refresh_all_devices
 
@@ -455,10 +455,18 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            password = user_input[CONF_PASSWORD]
+            new_email = user_input[CONF_EMAIL]
+            new_password = user_input[CONF_PASSWORD]
+            # Temporarily swap in the new email so the refresh helper uses it.
+            if entry and new_email != entry.data.get(CONF_TUYA_EMAIL):
+                self.hass.config_entries.async_update_entry(
+                    entry,
+                    data={**entry.data, CONF_TUYA_EMAIL: new_email},
+                )
+                self._email = new_email
             try:
                 refreshed = await async_refresh_all_devices(
-                    self.hass, entry, new_password=password,
+                    self.hass, entry, new_password=new_password,
                 ) if entry else 0
             except Exception as exc:
                 _LOGGER.warning("Reconfigure refresh failed: %s", exc)
@@ -473,7 +481,10 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
+            data_schema=vol.Schema({
+                vol.Required(CONF_EMAIL, default=self._email or ""): str,
+                vol.Required(CONF_PASSWORD): str,
+            }),
             errors=errors,
             description_placeholders={"email": self._email or ""},
         )
