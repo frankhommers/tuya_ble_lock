@@ -52,7 +52,10 @@
       "uuid": { "name": "UUID" },
       "login_key": { "name": "Login key" },
       "virtual_id": { "name": "Virtual ID" },
-      "auth_key": { "name": "Auth key" }
+      "auth_key": { "name": "Auth key" },
+      "local_key": { "name": "Local key" },
+      "sec_key": { "name": "Sec key" },
+      "check_code": { "name": "Check code" }
     },
     "switch": {
       "auto_lock": { "name": "Auto-lock" },

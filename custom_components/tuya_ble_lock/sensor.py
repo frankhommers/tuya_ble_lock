@@ -19,6 +19,11 @@ _DIAG_KEYS = [
     ("login_key", "Login key", "login_key"),
     ("virtual_id", "Virtual ID", "virtual_id"),
     ("auth_key", "Auth key", "auth_key"),
+    # V5 / btScyChannel credentials — present only after reauth or on
+    # freshly-added devices. Diagnostic so users can confirm reauth ran.
+    ("local_key", "Local key", "local_key"),
+    ("sec_key", "Sec key", "sec_key"),
+    ("check_code", "Check code", "check_code"),
 ]
 
 
