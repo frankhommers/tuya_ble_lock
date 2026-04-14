@@ -242,6 +242,82 @@ class TuyaMobileAPIAsync:
         return None
 
 
+async def async_refresh_all_devices(
+    hass: HomeAssistant, entry, *, new_password: str | None = None,
+) -> int:
+    """Refresh cloud creds AND cloud DP snapshot for every device in the
+    hub's store. Single entry point shared by the reauth flow and the
+    `refresh_cloud_credentials` service.
+
+    Uses `new_password` if given (reauth case), else the password stored
+    in the hub entry. Returns the number of devices successfully updated.
+    The hub entry's password is updated only when `new_password` is
+    provided. Caller is responsible for reloading the entry afterwards.
+    """
+    from .const import (
+        CONF_TUYA_EMAIL, CONF_TUYA_PASSWORD,
+        CONF_TUYA_COUNTRY, CONF_TUYA_REGION,
+    )
+    from .device_store import DeviceStore
+
+    email = entry.data.get(CONF_TUYA_EMAIL, "")
+    password = new_password or entry.data.get(CONF_TUYA_PASSWORD, "")
+    country = entry.data.get(CONF_TUYA_COUNTRY, "")
+    region = entry.data.get(CONF_TUYA_REGION, "")
+    if not (email and password):
+        raise RuntimeError("Hub has no usable cloud credentials")
+
+    device_store = DeviceStore(hass)
+    await device_store.async_load()
+    refreshed = 0
+    for mac, dev in list(device_store.devices.items()):
+        try:
+            res = await async_fetch_auth_key(
+                hass, dev.get("uuid", "") or "",
+                email, password, country, region, device_mac=mac,
+            )
+        except Exception as exc:
+            _LOGGER.warning("Cloud refresh for %s failed: %s", mac, exc)
+            continue
+        updates = {
+            "local_key": res.get("local_key", "") or dev.get("local_key", ""),
+            "sec_key": res.get("sec_key", "") or dev.get("sec_key", ""),
+            "check_code": res.get("check_code", "") or dev.get("check_code", ""),
+            "auth_key": res.get("auth_key", "") or dev.get("auth_key", ""),
+        }
+        if updates["local_key"]:
+            updates["login_key"] = updates["local_key"][:6].encode().hex()
+        dev_id = res.get("device_id") or ""
+        if dev_id:
+            updates["virtual_id"] = (
+                (dev_id.encode() + b"\x00" * 22)[:22]
+            ).hex()
+        if res.get("dps"):
+            updates["cloud_dps"] = res["dps"]
+        await device_store.async_update_device(mac, **updates)
+        refreshed += 1
+        _LOGGER.info(
+            "Refreshed %s: local_key=%s sec_key=%s check_code=%s dps=%d",
+            mac,
+            "yes" if updates["local_key"] else "no",
+            "yes" if updates["sec_key"] else "no",
+            updates.get("check_code") or "(empty)",
+            len(res.get("dps") or {}),
+        )
+
+    if new_password and refreshed:
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                CONF_TUYA_EMAIL: email,
+                CONF_TUYA_PASSWORD: new_password,
+                CONF_TUYA_COUNTRY: country,
+                CONF_TUYA_REGION: region,
+            },
+        )
+    return refreshed
+
+
 async def async_fetch_auth_key_only(
     hass: HomeAssistant, device_uuid: str, email: str, password: str,
     country_code: str, region: str,

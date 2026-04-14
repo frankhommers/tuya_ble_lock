@@ -395,74 +395,19 @@ async def async_register_services(hass: HomeAssistant) -> None:
         Tuya app, or when sensors that only populate on events (doorbell,
         hijack, last unlock) show as 'unknown' on first setup.
         """
-        from .const import (
-            CONF_TUYA_EMAIL, CONF_TUYA_PASSWORD,
-            CONF_TUYA_COUNTRY, CONF_TUYA_REGION,
-        )
-        from .device_store import DeviceStore
-        from .tuya_cloud import async_fetch_auth_key
+        from .tuya_cloud import async_refresh_all_devices
 
         entries = hass.config_entries.async_entries(DOMAIN)
         if not entries:
             raise HomeAssistantError("Tuya BLE Lock hub is not configured")
         entry = entries[0]
-        email = entry.data.get(CONF_TUYA_EMAIL, "")
-        password = entry.data.get(CONF_TUYA_PASSWORD, "")
-        country = entry.data.get(CONF_TUYA_COUNTRY, "")
-        region = entry.data.get(CONF_TUYA_REGION, "")
-        if not (email and password):
-            raise HomeAssistantError(
-                "Hub has no cloud credentials stored — run the integration "
-                "setup flow or use Reconfigure."
-            )
-
-        device_store = DeviceStore(hass)
-        await device_store.async_load()
-        refreshed = 0
-        for mac, dev in list(device_store.devices.items()):
-            try:
-                res = await async_fetch_auth_key(
-                    hass, dev.get("uuid", "") or "",
-                    email, password, country, region, device_mac=mac,
-                )
-            except Exception as exc:
-                _LOGGER.warning("Cloud refresh for %s failed: %s", mac, exc)
-                continue
-            updates = {
-                "local_key": res.get("local_key", "") or dev.get("local_key", ""),
-                "sec_key": res.get("sec_key", "") or dev.get("sec_key", ""),
-                "check_code": res.get("check_code", "") or dev.get("check_code", ""),
-                "auth_key": res.get("auth_key", "") or dev.get("auth_key", ""),
-            }
-            if updates["local_key"]:
-                updates["login_key"] = updates["local_key"][:6].encode().hex()
-            dev_id = res.get("device_id") or ""
-            if dev_id:
-                updates["virtual_id"] = (
-                    (dev_id.encode() + b"\x00" * 22)[:22]
-                ).hex()
-            # Persist cloud DP snapshot; __init__.py seeds coordinator.state
-            # from it on (re)load so entities for event-only DPs (doorbell,
-            # hijack, last unlock, door, manual_lock, auto_lock_time…) aren't
-            # stuck at 'unknown'.
-            if res.get("dps"):
-                updates["cloud_dps"] = res["dps"]
-            await device_store.async_update_device(mac, **updates)
-            refreshed += 1
-            _LOGGER.info(
-                "Refreshed %s: local_key=%s sec_key=%s check_code=%s",
-                mac,
-                "yes" if updates["local_key"] else "no",
-                "yes" if updates["sec_key"] else "no",
-                updates.get("check_code") or "(empty)",
-            )
-        _LOGGER.info("Cloud refresh complete: %d/%d device(s) updated",
-                     refreshed, len(device_store.devices))
-        # Reload the hub entry so coordinators pick up the new creds. Note
-        # this rebuilds state from scratch — apply_cloud_dps above seeds the
-        # *pre-reload* coordinators; post-reload we rely on BLE push reports
-        # and the next successful CMD_DEVICE_STATUS.
-        await hass.config_entries.async_reload(entry.entry_id)
+        try:
+            refreshed = await async_refresh_all_devices(hass, entry)
+        except RuntimeError as exc:
+            raise HomeAssistantError(str(exc)) from exc
+        _LOGGER.info("Cloud refresh complete: %d device(s) updated", refreshed)
+        if refreshed:
+            await hass.config_entries.async_reload(entry.entry_id)
 
     hass.services.async_register(DOMAIN, "add_pin", handle_add_pin, schema=ADD_PIN_SCHEMA)
     hass.services.async_register(DOMAIN, "add_fingerprint", handle_add_fingerprint, schema=ADD_FINGERPRINT_SCHEMA)

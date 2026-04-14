@@ -456,6 +456,7 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
           * Lock was re-paired in the Tuya app: localKey/secKey/check_code
             all rotated and need to be pulled down again.
         """
+        from .tuya_cloud import async_refresh_all_devices
         errors: dict[str, str] = {}
         entry = self.hass.config_entries.async_get_entry(
             self.context.get("entry_id", "")
@@ -465,64 +466,24 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             password = user_input[CONF_PASSWORD]
             country = user_input.get(CONF_TUYA_COUNTRY) or self._country
             region = user_input.get(CONF_TUYA_REGION) or self._region
-
-            device_store = DeviceStore(self.hass)
-            await device_store.async_load()
-            refreshed = 0
-            login_failed = False
-
-            for mac, dev in list(device_store.devices.items()):
-                try:
-                    res = await async_fetch_auth_key(
-                        self.hass,
-                        dev.get("uuid", "") or "",
-                        self._email,
-                        password,
-                        country,
-                        region,
-                        device_mac=mac,
-                    )
-                except Exception as exc:
-                    msg = str(exc)
-                    _LOGGER.debug("Reauth fetch for %s failed: %s", mac, msg)
-                    if "login" in msg.lower():
-                        login_failed = True
-                        break
-                    continue
-
-                updates = {
-                    "local_key": res.get("local_key", "") or dev.get("local_key", ""),
-                    "sec_key": res.get("sec_key", "") or dev.get("sec_key", ""),
-                    "check_code": res.get("check_code", "") or dev.get("check_code", ""),
-                    "auth_key": res.get("auth_key", "") or dev.get("auth_key", ""),
-                }
-                # login_key/virtual_id derive from local_key + device_id
-                if updates["local_key"]:
-                    updates["login_key"] = updates["local_key"][:6].encode().hex()
-                dev_id = res.get("device_id") or ""
-                if dev_id:
-                    updates["virtual_id"] = (
-                        (dev_id.encode() + b"\x00" * 22)[:22]
-                    ).hex()
-                if res.get("dps"):
-                    updates["cloud_dps"] = res["dps"]
-                await device_store.async_update_device(mac, **updates)
-                refreshed += 1
-
-            if login_failed:
+            # Temporarily patch country/region if the user had to supply them
+            if entry and (country != entry.data.get(CONF_TUYA_COUNTRY) or
+                          region != entry.data.get(CONF_TUYA_REGION)):
+                self.hass.config_entries.async_update_entry(
+                    entry,
+                    data={**entry.data, CONF_TUYA_COUNTRY: country,
+                          CONF_TUYA_REGION: region},
+                )
+            try:
+                refreshed = await async_refresh_all_devices(
+                    self.hass, entry, new_password=password,
+                ) if entry else 0
+            except Exception as exc:
+                _LOGGER.warning("Reauth refresh failed: %s", exc)
                 errors["base"] = "auth_key_failed"
             else:
                 _LOGGER.info("Reauth complete: refreshed %d device(s)", refreshed)
                 if entry:
-                    self.hass.config_entries.async_update_entry(
-                        entry,
-                        data={
-                            CONF_TUYA_EMAIL: self._email,
-                            CONF_TUYA_PASSWORD: password,
-                            CONF_TUYA_COUNTRY: country,
-                            CONF_TUYA_REGION: region,
-                        },
-                    )
                     await self.hass.config_entries.async_reload(entry.entry_id)
                 return self.async_abort(reason="reauth_successful")
 
