@@ -32,11 +32,14 @@ _LOGGER = logging.getLogger(__name__)
 ALL_PLATFORMS = [
     Platform.LOCK,
     Platform.SENSOR,
+    Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.SWITCH,
     Platform.SELECT,
     Platform.NUMBER,
 ]
+
+_BINARY_SENSOR_KEYS = {"doorbell", "hijack", "message"}
 
 
 def _platforms_for_devices(profiles: dict[str, dict]) -> list[Platform]:
@@ -49,6 +52,9 @@ def _platforms_for_devices(profiles: dict[str, dict]) -> list[Platform]:
             platforms.add(Platform.SELECT)
         if "auto_lock_time_number" in entities:
             platforms.add(Platform.NUMBER)
+        state_keys = {m.get("key") for m in profile.get("state_map", {}).values()}
+        if state_keys & _BINARY_SENSOR_KEYS:
+            platforms.add(Platform.BINARY_SENSOR)
     return list(platforms)
 
 

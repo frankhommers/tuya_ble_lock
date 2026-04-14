@@ -91,6 +91,15 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
     def profile(self) -> dict:
         return self._profile
 
+    # DP id → last_unlock method label. Any DP here that receives a non-zero
+    # user id updates self.state['last_unlock_method'] and 'last_unlock_user'.
+    _UNLOCK_METHOD_DPS = {
+        12: "fingerprint", 13: "password", 14: "dynamic_code",
+        15: "card", 16: "mechanical_key", 19: "bluetooth",
+        55: "temporary_code", 62: "remote_phone", 63: "remote_voice",
+        67: "offline_code",
+    }
+
     def _process_dp_reports(self, dps: list[dict]) -> None:
         """Update state from DP reports using profile's state_map."""
         _LOGGER.debug("Processing %d DPs: %s", len(dps),
@@ -98,7 +107,19 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
         state_map = self._profile.get("state_map", {})
         changed = False
         for dp in dps:
-            dp_id_str = str(dp["id"])
+            dp_id = dp["id"]
+            dp_id_str = str(dp_id)
+
+            # Track last unlock source (any unlock-method DP with non-zero user id)
+            if dp_id in self._UNLOCK_METHOD_DPS:
+                raw = dp["raw"]
+                user_id = int.from_bytes(raw, "big") if raw else 0
+                if user_id:
+                    self.state["last_unlock_method"] = self._UNLOCK_METHOD_DPS[dp_id]
+                    self.state["last_unlock_user"] = user_id
+                    self.state["last_unlock_time"] = time.time()
+                    changed = True
+
             mapping = state_map.get(dp_id_str)
             if not mapping:
                 continue
@@ -243,22 +264,26 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
     async def _fetch_status(self) -> None:
         """Collect DP reports from the lock. Call while connected.
 
-        CMD_DEVICE_STATUS returns 0 DPs on tested firmwares, so we rely on:
-        - Battery trigger DP for devices that need it (SYD8811: DP 69 → DP 520)
-        - Passive collect for auto-pushed DPs (H8 Pro pushes DP 8 after commands)
-        - State restoration (RestoreEntity) for settings between restarts
+        On btScyChannel / protocol-5.0 firmwares (K3 BLE PRO 2) the
+        CMD_DEVICE_STATUS (0x0003) response does include DPs — notably
+        DP8 battery. On older firmwares (SYD8811, H8 Pro) it returns 0
+        DPs and a trigger DP write is required instead. Try both.
         """
+        try:
+            await self._session.async_query_status()
+        except Exception as exc:
+            _LOGGER.debug("CMD_DEVICE_STATUS failed: %s", exc)
+
         battery_cfg = self._profile.get("entities", {}).get("battery_sensor")
         if battery_cfg:
             trigger_dp = battery_cfg.get("trigger_dp")
             trigger_hex = battery_cfg.get("trigger_payload")
             try:
-                if trigger_dp and trigger_hex:
+                if trigger_dp and trigger_hex and self.state.get("battery_percent") is None:
                     trigger_payload = bytes.fromhex(trigger_hex)
                     await self._session.async_send_dp_raw(trigger_dp, trigger_payload)
-                # Collect any pushed DPs (triggered or auto-pushed after commands)
-                extra = await self._session._collect(timeout=3.0)
-                _LOGGER.debug("Status collect: %d frames", len(extra))
+                extra = await self._session._collect(timeout=2.0)
+                _LOGGER.debug("Status collect: %d extra frames", len(extra))
                 self._session._dispatch_dp_reports(extra)
             except Exception as exc:
                 _LOGGER.warning("Status fetch failed: %s", exc)

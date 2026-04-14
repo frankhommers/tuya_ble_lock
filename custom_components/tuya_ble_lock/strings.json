@@ -67,6 +67,11 @@
     },
     "button": {
       "refresh": { "name": "Refresh status" }
+    },
+    "binary_sensor": {
+      "doorbell": { "name": "Doorbell" },
+      "hijack": { "name": "Hijack alarm" },
+      "message": { "name": "Message" }
     }
   }
 }

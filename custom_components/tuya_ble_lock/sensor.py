@@ -37,6 +37,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
         has_door = any(m.get("key") == "closed_opened" for m in state_map.values())
         if has_door:
             entities.append(TuyaBLEDoorSensor(coordinator, entry))
+        # Last-unlock sensor: show method only on locks that expose at least
+        # one unlock-method DP in their state_map.
+        if any(
+            (m.get("key") or "").startswith("unlock_") for m in state_map.values()
+        ):
+            entities.append(TuyaBLELastUnlockSensor(coordinator, entry))
         for data_key, name, uid_suffix in _DIAG_KEYS:
             entities.append(
                 TuyaBLEDiagnosticSensor(
@@ -156,6 +162,37 @@ class TuyaBLEDoorSensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
         if val == "closed":
             return "mdi:door-closed"
         return "mdi:door"
+
+
+class TuyaBLELastUnlockSensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
+    _attr_name = "Last unlock"
+    _attr_icon = "mdi:key-variant"
+
+    @property
+    def unique_id(self):
+        return f"{self._mac}_last_unlock"
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator.state.get("last_unlock_method")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        attrs = {}
+        user = self.coordinator.state.get("last_unlock_user")
+        ts = self.coordinator.state.get("last_unlock_time")
+        if user is not None:
+            attrs["user_id"] = user
+        if ts is not None:
+            attrs["timestamp"] = ts
+        return attrs
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self.coordinator.state.get("last_unlock_method") is None:
+            last = await self.async_get_last_state()
+            if last and last.state not in (None, "unknown", "unavailable"):
+                self.coordinator.state["last_unlock_method"] = last.state
 
 
 class TuyaBLEDiagnosticSensor(TuyaBLELockEntity, SensorEntity):
