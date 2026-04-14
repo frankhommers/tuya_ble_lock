@@ -242,23 +242,59 @@ def parse_frames(keys: dict[int, bytes], raw_notifications: list[bytes]) -> list
     return frames
 
 
+def _parse_klv(klv: bytes, dp_id_width: int) -> list[dict]:
+    dps: list[dict] = []
+    pos = 0
+    hdr = dp_id_width + 3  # dp_id + type + 2-byte len
+    while pos + hdr <= len(klv):
+        if dp_id_width == 2:
+            dp_id = struct.unpack(">H", klv[pos : pos + 2])[0]
+        else:
+            dp_id = klv[pos]
+        dp_type = klv[pos + dp_id_width]
+        dp_len = struct.unpack(
+            ">H", klv[pos + dp_id_width + 1 : pos + dp_id_width + 3]
+        )[0]
+        if pos + hdr + dp_len > len(klv):
+            break
+        val = klv[pos + hdr : pos + hdr + dp_len]
+        dps.append({"id": dp_id, "type": dp_type, "len": dp_len, "raw": val})
+        pos += hdr + dp_len
+    return dps, pos
+
+
 def parse_dp_report(data: bytes) -> list[dict]:
-    """Parse V4 DP report: [sn(4)][flags(1)][0x80][dp_id(2)][type(1)][len(2)][val]."""
+    """Parse V4 DP report payload.
+
+    Framing observed on real devices:
+      [sn:4][flags:1][0x80][DP…]
+
+    DP element format differs between firmwares:
+      * Legacy V4 / Smart Lock 3 (SYD8811):  [dp:2][type:1][len:2][val]
+        DP ids can exceed 255 here (e.g. Smart Lock 3 reports battery on DP 520).
+      * btScyChannel (V5) / K3 BLE PRO 2:    [dp:1][type:1][len:2][val]
+        Multi-DP bundles in CMD_DEVICE_STATUS responses only work with this
+        width.
+
+    We try 1-byte first (matches what build_v4_dp writes and what V5 status
+    queries return), and fall back to 2-byte if the stream doesn't consume
+    cleanly. Both parses are returned merged when both cover different parts.
+    """
     if len(data) < 6:
         return []
     klv = data[6:]
-    dps = []
-    pos = 0
-    while pos + 5 <= len(klv):
-        dp_id = struct.unpack(">H", klv[pos : pos + 2])[0]
-        dp_type = klv[pos + 2]
-        dp_len = struct.unpack(">H", klv[pos + 3 : pos + 5])[0]
-        if pos + 5 + dp_len > len(klv):
-            break
-        val = klv[pos + 5 : pos + 5 + dp_len]
-        dps.append({"id": dp_id, "type": dp_type, "len": dp_len, "raw": val})
-        pos += 5 + dp_len
-    return dps
+
+    one_byte, one_pos = _parse_klv(klv, 1)
+    two_byte, two_pos = _parse_klv(klv, 2)
+
+    # Pick the parse that consumed more of the stream cleanly. In a tie the
+    # one that produced the most DPs wins. On a full consume with multiple
+    # DPs the 1-byte format is the correct modern framing.
+    if one_pos > two_pos:
+        return one_byte
+    if two_pos > one_pos:
+        return two_byte
+    return one_byte if len(one_byte) >= len(two_byte) else two_byte
 
 
 def parse_dp_report_v3(data: bytes) -> list[dict]:
