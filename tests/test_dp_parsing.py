@@ -65,28 +65,23 @@ def _build_report(dps: list[tuple[int, int, bytes]], dp_id_width: int = 1) -> by
     return hdr + body
 
 
+# Real CMD_DEVICE_STATUS response from a K3 BLE PRO 2 (captured via the
+# Home Assistant debug log at 2026-04-14 17:11:34). Layout:
+#   [sn:4][flags:1=0xf0][0x80][0x00 pad] then [dp:1][type:1][len:2][val]…
 K3_QUERY_BUNDLE = (
-    # 6-byte frame header
-    "00000001 8000"
-    # DP 8 — battery% = 100 (type=value/2, len=4)
-    "08 02 0004 00000064"
-    # DP 28 — language = 1 (enum, len=1)
-    "1c 04 0001 01"
-    # DP 31 — volume = 2 (enum, len=1)
-    "1f 04 0001 02"
-    # DP 34 — two-factor = 0 (enum, len=1)
-    "22 04 0001 00"
-    # DP 33 — auto_lock = true (bool, len=1)
-    "21 01 0001 01"
-    # DP 36 — auto_lock_time = 3 (value, len=4)
-    "24 02 0004 00000003"
-    # DP 32 — aux bool
-    "20 01 0001 00"
+    "00000000 f0 80 00"
+    "08 02 0004 00000064"   # DP 8  battery% = 100
+    "2f 01 0001 00"          # DP 47 motor_state = false
+    "1c 04 0001 01"          # DP 28 language = 1 (english)
+    "1f 04 0001 02"          # DP 31 volume = 2 (normal)
+    "22 04 0001 00"          # DP 34 unlock_switch = 0 (single_unlock)
+    "21 01 0001 01"          # DP 33 auto_lock = true
 )
 
+# Real DP71 unlock echo from the same session. Different header format:
+#   [sn:4][0x80][0x00 pad] then [dp:1][type:1][len:2][val]
 DP71_UNLOCK_ECHO = (
-    "0000003a 8000"
-    # DP 71 — ble_unlock_verify payload (type=0/raw, len=0x13)
+    "0000003a 80 00"
     "47 00 0013 0001ffff3335323733363836 01 69de185f 0000"
 )
 
@@ -100,15 +95,15 @@ def _hex(s: str) -> bytes:
 def test_k3_multi_dp_bundle_extracts_all_settings():
     dps = parse_dp_report(_hex(K3_QUERY_BUNDLE))
     ids = {dp["id"]: dp for dp in dps}
-    assert set(ids) == {8, 28, 31, 34, 33, 36, 32}, ids.keys()
+    assert set(ids) == {8, 47, 28, 31, 34, 33}, ids.keys()
 
     # Spot-check: correct type & decoded value for each
     assert ids[8]["type"] == 2 and int.from_bytes(ids[8]["raw"], "big") == 100
+    assert ids[47]["type"] == 1 and ids[47]["raw"] == b"\x00"  # motor idle
     assert ids[28]["type"] == 4 and ids[28]["raw"] == b"\x01"  # english
     assert ids[31]["type"] == 4 and ids[31]["raw"] == b"\x02"  # volume=normal
     assert ids[34]["type"] == 4 and ids[34]["raw"] == b"\x00"  # single_unlock
     assert ids[33]["type"] == 1 and ids[33]["raw"] == b"\x01"  # auto_lock on
-    assert ids[36]["type"] == 2 and int.from_bytes(ids[36]["raw"], "big") == 3
 
 
 def test_single_dp71_echo_still_decodes_after_parser_switch():
@@ -160,8 +155,8 @@ def test_integration_state_map_resolves_k3_bundle():
     assert state["language"] == 1
     assert state["volume"] == 2
     assert state["auto_lock"] is True
-    assert state["auto_lock_time"] == 3
     assert state["unlock_switch"] == 0
+    assert state["motor_state"] is False
 
 
 if __name__ == "__main__":

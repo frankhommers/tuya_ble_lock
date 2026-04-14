@@ -266,35 +266,34 @@ def _parse_klv(klv: bytes, dp_id_width: int) -> list[dict]:
 def parse_dp_report(data: bytes) -> list[dict]:
     """Parse V4 DP report payload.
 
-    Framing observed on real devices:
-      [sn:4][flags:1][0x80][DP…]
+    Framings observed on real devices:
+      * Legacy V4 (Smart Lock 3): [sn:4][flags:1][0x80] + [dp:2][type:1][len:2][val]
+      * btScyChannel V5 (K3 BLE PRO 2): [sn:4][flags:1][0x80][0x00] + [dp:1][type:1][len:2][val]
 
-    DP element format differs between firmwares:
-      * Legacy V4 / Smart Lock 3 (SYD8811):  [dp:2][type:1][len:2][val]
-        DP ids can exceed 255 here (e.g. Smart Lock 3 reports battery on DP 520).
-      * btScyChannel (V5) / K3 BLE PRO 2:    [dp:1][type:1][len:2][val]
-        Multi-DP bundles in CMD_DEVICE_STATUS responses only work with this
-        width.
-
-    We try 1-byte first (matches what build_v4_dp writes and what V5 status
-    queries return), and fall back to 2-byte if the stream doesn't consume
-    cleanly. Both parses are returned merged when both cover different parts.
+    We try every combination of (6- or 7-byte header) × (1- or 2-byte dp
+    id) and return whichever consumes the most of the payload. This
+    handles legacy devices reporting DPs > 255 as well as the V5 bundled
+    status response that crams 7 DPs behind a pad byte.
     """
     if len(data) < 6:
         return []
-    klv = data[6:]
 
-    one_byte, one_pos = _parse_klv(klv, 1)
-    two_byte, two_pos = _parse_klv(klv, 2)
-
-    # Pick the parse that consumed more of the stream cleanly. In a tie the
-    # one that produced the most DPs wins. On a full consume with multiple
-    # DPs the 1-byte format is the correct modern framing.
-    if one_pos > two_pos:
-        return one_byte
-    if two_pos > one_pos:
-        return two_byte
-    return one_byte if len(one_byte) >= len(two_byte) else two_byte
+    best_dps: list[dict] = []
+    best_score = -1
+    for header_len in (7, 6):
+        if len(data) < header_len:
+            continue
+        klv = data[header_len:]
+        for width in (1, 2):
+            dps, consumed = _parse_klv(klv, width)
+            if not dps:
+                continue
+            # Prefer (a) more bytes consumed, (b) more DPs on tie.
+            score = consumed * 1000 + len(dps)
+            if score > best_score:
+                best_score = score
+                best_dps = dps
+    return best_dps
 
 
 def parse_dp_report_v3(data: bytes) -> list[dict]:
