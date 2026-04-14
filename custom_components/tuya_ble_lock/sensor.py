@@ -197,11 +197,15 @@ class TuyaBLELastUnlockSensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
 
 class TuyaBLEDiagnosticSensor(TuyaBLELockEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator, entry, data_key: str, name: str, uid_suffix: str):
-        self._attr_name = name
-        self._uid_suffix = uid_suffix
         super().__init__(coordinator, entry)
+        # Set name *after* super() so the parent's __init__ can't wipe it
+        # back to None. Also set translation_key so the UI can localise.
+        self._attr_name = name
+        self._attr_translation_key = uid_suffix
+        self._uid_suffix = uid_suffix
         self._data_key = data_key
 
     @property
@@ -214,4 +218,19 @@ class TuyaBLEDiagnosticSensor(TuyaBLELockEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        return self.coordinator.device_data.get(self._data_key)
+        val = self.coordinator.device_data.get(self._data_key)
+        if not isinstance(val, str):
+            return val
+        # Diagnostic values (hex keys, virtual_ids) are long and noisy in
+        # the UI. Show a short preview; the full value is still available as
+        # an attribute for anyone who needs to copy it.
+        if len(val) > 16:
+            return f"{val[:8]}…{val[-4:]}"
+        return val
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        val = self.coordinator.device_data.get(self._data_key)
+        if isinstance(val, str) and len(val) > 16:
+            return {"full_value": val, "length": len(val)}
+        return {}
