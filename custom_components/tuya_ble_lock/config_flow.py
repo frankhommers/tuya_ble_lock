@@ -411,14 +411,39 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-    # ---- Reauth ----
+    # ---- Reauth / Reconfigure ----
+    #
+    # HA exposes two entry points that do almost the same thing:
+    #   * async_step_reauth         — triggered automatically when a call
+    #                                 raises ConfigEntryAuthFailed
+    #   * async_step_reconfigure    — manual "Reconfigure" option in the
+    #                                 hub's ⋮ menu (HA 2024.11+)
+    # Both land on the same confirm form.
+
+    async def _prime_from_entry(self) -> None:
+        entry = self._reconfigure_source_entry()
+        data = (entry.data if entry else {}) or {}
+        self._email = data.get(CONF_TUYA_EMAIL, "")
+        self._country = data.get(CONF_TUYA_COUNTRY, "")
+        self._region = data.get(CONF_TUYA_REGION, "")
+
+    def _reconfigure_source_entry(self):
+        entry_id = self.context.get("entry_id", "")
+        if entry_id:
+            return self.hass.config_entries.async_get_entry(entry_id)
+        return None
 
     async def async_step_reauth(self, entry_data: dict):
-        """Triggered when cloud credentials fail or user clicks 'Reconfigure'."""
+        """Automatic reauth (e.g. password invalidated)."""
         self._email = entry_data.get(CONF_TUYA_EMAIL, "")
         self._country = entry_data.get(CONF_TUYA_COUNTRY, "")
         self._region = entry_data.get(CONF_TUYA_REGION, "")
         return await self.async_step_reauth_confirm()
+
+    async def async_step_reconfigure(self, user_input=None):
+        """Manual 'Reconfigure' entry (HA hub ⋮ menu)."""
+        await self._prime_from_entry()
+        return await self.async_step_reauth_confirm(user_input)
 
     async def async_step_reauth_confirm(self, user_input=None):
         """Ask for password (and country/region if missing), re-login, refresh

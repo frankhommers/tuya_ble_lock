@@ -165,3 +165,12 @@ create_temp_password:
       required: true
       selector:
         datetime:
+
+refresh_cloud_credentials:
+  name: Refresh cloud credentials
+  description: >
+    Re-login to the Tuya cloud and refresh BLE keys (local_key, sec_key,
+    check_code, auth_key) for every lock in the hub. Use this after
+    re-pairing a lock in the Tuya app — all per-device keys rotate
+    during pairing. No arguments.
+

@@ -389,9 +389,74 @@ async def async_register_services(hass: HomeAssistant) -> None:
             })
         return {"credentials": result}
 
+    async def handle_refresh_cloud_credentials(call: ServiceCall) -> None:
+        """Re-login to the Tuya cloud and refresh BLE keys for every stored
+        device. Use after re-pairing a lock in the Tuya app.
+        """
+        from .const import (
+            CONF_TUYA_EMAIL, CONF_TUYA_PASSWORD,
+            CONF_TUYA_COUNTRY, CONF_TUYA_REGION,
+        )
+        from .device_store import DeviceStore
+        from .tuya_cloud import async_fetch_auth_key
+
+        entries = hass.config_entries.async_entries(DOMAIN)
+        if not entries:
+            raise HomeAssistantError("Tuya BLE Lock hub is not configured")
+        entry = entries[0]
+        email = entry.data.get(CONF_TUYA_EMAIL, "")
+        password = entry.data.get(CONF_TUYA_PASSWORD, "")
+        country = entry.data.get(CONF_TUYA_COUNTRY, "")
+        region = entry.data.get(CONF_TUYA_REGION, "")
+        if not (email and password):
+            raise HomeAssistantError(
+                "Hub has no cloud credentials stored — run the integration "
+                "setup flow or use Reconfigure."
+            )
+
+        device_store = DeviceStore(hass)
+        await device_store.async_load()
+        refreshed = 0
+        for mac, dev in list(device_store.devices.items()):
+            try:
+                res = await async_fetch_auth_key(
+                    hass, dev.get("uuid", "") or "",
+                    email, password, country, region, device_mac=mac,
+                )
+            except Exception as exc:
+                _LOGGER.warning("Cloud refresh for %s failed: %s", mac, exc)
+                continue
+            updates = {
+                "local_key": res.get("local_key", "") or dev.get("local_key", ""),
+                "sec_key": res.get("sec_key", "") or dev.get("sec_key", ""),
+                "check_code": res.get("check_code", "") or dev.get("check_code", ""),
+                "auth_key": res.get("auth_key", "") or dev.get("auth_key", ""),
+            }
+            if updates["local_key"]:
+                updates["login_key"] = updates["local_key"][:6].encode().hex()
+            dev_id = res.get("device_id") or ""
+            if dev_id:
+                updates["virtual_id"] = (
+                    (dev_id.encode() + b"\x00" * 22)[:22]
+                ).hex()
+            await device_store.async_update_device(mac, **updates)
+            refreshed += 1
+            _LOGGER.info(
+                "Refreshed %s: local_key=%s sec_key=%s check_code=%s",
+                mac,
+                "yes" if updates["local_key"] else "no",
+                "yes" if updates["sec_key"] else "no",
+                updates.get("check_code") or "(empty)",
+            )
+        _LOGGER.info("Cloud refresh complete: %d/%d device(s) updated",
+                     refreshed, len(device_store.devices))
+        # Reload the hub entry so coordinators pick up the new creds
+        await hass.config_entries.async_reload(entry.entry_id)
+
     hass.services.async_register(DOMAIN, "add_pin", handle_add_pin, schema=ADD_PIN_SCHEMA)
     hass.services.async_register(DOMAIN, "add_fingerprint", handle_add_fingerprint, schema=ADD_FINGERPRINT_SCHEMA)
     hass.services.async_register(DOMAIN, "add_card", handle_add_card, schema=ADD_CARD_SCHEMA)
     hass.services.async_register(DOMAIN, "delete_credential", handle_delete_credential, schema=DELETE_CREDENTIAL_SCHEMA)
     hass.services.async_register(DOMAIN, "list_credentials", handle_list_credentials, schema=LIST_CREDENTIALS_SCHEMA, supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(DOMAIN, "create_temp_password", handle_create_temp_password, schema=CREATE_TEMP_PASSWORD_SCHEMA)
+    hass.services.async_register(DOMAIN, "refresh_cloud_credentials", handle_refresh_cloud_credentials, schema=vol.Schema({}))
