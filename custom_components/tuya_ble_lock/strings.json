@@ -27,6 +27,13 @@
           "tuya_country_code": "Country code",
           "tuya_region": "Cloud region"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Tuya account",
+        "description": "Enter the Tuya password for {email}. This refreshes the stored cloud credentials and the BLE keys for every lock on the hub.",
+        "data": {
+          "password": "Password"
+        }
       }
     },
     "error": {

@@ -443,9 +443,40 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return await self.async_step_reauth_confirm()
 
     async def async_step_reconfigure(self, user_input=None):
-        """Manual 'Reconfigure' entry (HA hub ⋮ menu)."""
+        """Manual 'Reconfigure' entry (HA hub ⋮ menu).
+
+        Always prompts for the Tuya password — the whole point of
+        Reconfigure is that the stored one no longer works.
+        """
+        from .tuya_cloud import async_refresh_all_devices
+
         await self._prime_from_entry()
-        return await self.async_step_reauth_confirm(user_input)
+        entry = self._reconfigure_source_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            password = user_input[CONF_PASSWORD]
+            try:
+                refreshed = await async_refresh_all_devices(
+                    self.hass, entry, new_password=password,
+                ) if entry else 0
+            except Exception as exc:
+                _LOGGER.warning("Reconfigure refresh failed: %s", exc)
+                errors["base"] = "auth_key_failed"
+            else:
+                _LOGGER.info(
+                    "Reconfigure complete: refreshed %d device(s)", refreshed
+                )
+                if entry:
+                    await self.hass.config_entries.async_reload(entry.entry_id)
+                return self.async_abort(reason="reauth_successful")
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
+            errors=errors,
+            description_placeholders={"email": self._email or ""},
+        )
 
     async def async_step_reauth_confirm(self, user_input=None):
         """Ask for password (and country/region if missing), re-login, refresh
