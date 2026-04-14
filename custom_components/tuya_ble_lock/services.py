@@ -40,6 +40,7 @@ ADD_FINGERPRINT_SCHEMA = vol.Schema({
     vol.Required("device_id"): str,
     vol.Optional("person"): vol.Any(str, None),
     vol.Optional("member_name"): vol.Any(str, None),
+    vol.Optional("finger"): vol.Any(str, None),
     vol.Optional("admin", default=False): bool,
 })
 
@@ -190,6 +191,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
         device_id = call.data["device_id"]
         member_name = _resolve_member_name(hass, call.data)
         admin = call.data.get("admin", False)
+        finger = (call.data.get("finger") or "").strip() or None
 
         store: CredentialStore = hass.data[DOMAIN]["credential_store"]
         member = store.get_member_by_name(member_name)
@@ -216,12 +218,16 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 if dp["id"] == dp_create and dp["type"] == 0 and len(dp["raw"]) >= 7:
                     resp = parse_enroll_response(dp["raw"])
                     if resp.get("stage") == "COMPLETE" and resp.get("result") == "OK":
+                        cred_name = (
+                            f"{member_name} {finger}" if finger
+                            else f"{member_name} Fingerprint"
+                        )
                         await store.async_add_credential(
                             member_id=member.member_id,
                             lock_entry_id=mac,
                             cred_type=CRED_FINGERPRINT,
                             hw_id=resp.get("hw_id", 0),
-                            name=f"{member_name} Fingerprint",
+                            name=cred_name,
                         )
                         return
                     elif resp.get("stage") in ("FAILED", "CANCELLED"):
