@@ -18,6 +18,15 @@
       "confirm_new_device": {
         "title": "New Lock Found",
         "description": "A new Tuya BLE lock was found: {name} ({mac}). This lock needs BLE pairing. Please pair it via the Tuya app first, then it will be added automatically on next discovery."
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Tuya account",
+        "description": "Re-enter your Tuya password for {email}. This also refreshes the BLE keys for every stored lock — use this after re-pairing a lock in the Tuya app.",
+        "data": {
+          "password": "Password",
+          "tuya_country_code": "Country code",
+          "tuya_region": "Cloud region"
+        }
       }
     },
     "error": {
@@ -29,7 +38,8 @@
       "device_added": "Lock added successfully. It will appear shortly.",
       "missing_credentials": "Hub entry has no cloud credentials. Please reconfigure the integration.",
       "cloud_fetch_failed": "Could not fetch device info from Tuya cloud. The lock may not be paired to your Tuya app account.",
-      "pairing_not_implemented": "BLE pairing for unbound devices is not yet supported in auto-add mode. Please pair the lock via the Tuya app first."
+      "pairing_not_implemented": "BLE pairing for unbound devices is not yet supported in auto-add mode. Please pair the lock via the Tuya app first.",
+      "reauth_successful": "Re-authentication successful. BLE keys refreshed for all locks."
     }
   },
   "entity": {

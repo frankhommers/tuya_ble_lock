@@ -134,63 +134,6 @@ async def _async_migrate_legacy_entries(hass: HomeAssistant) -> None:
     )
 
 
-async def _async_backfill_btsc_fields(
-    hass: HomeAssistant, entry: ConfigEntry, device_store: DeviceStore
-) -> None:
-    """Fetch local_key/sec_key/check_code from cloud for devices missing them.
-
-    Devices added before btScyChannel support was merged only have
-    login_key (the first 6 bytes of local_key). For protocol-5.0 "new
-    security" locks we need the full local_key, plus sec_key and the
-    current DP71 check code. This runs once per restart and is a no-op
-    once the fields are populated.
-    """
-    missing = [
-        mac for mac, d in device_store.devices.items()
-        if not d.get("local_key") or not d.get("sec_key")
-    ]
-    if not missing:
-        return
-
-    email = entry.data.get(CONF_TUYA_EMAIL, "")
-    password = entry.data.get(CONF_TUYA_PASSWORD, "")
-    country = entry.data.get(CONF_TUYA_COUNTRY, "")
-    region = entry.data.get(CONF_TUYA_REGION, "")
-    if not (email and password):
-        _LOGGER.warning(
-            "%d device(s) missing btScyChannel fields but hub has no cloud "
-            "credentials to backfill", len(missing),
-        )
-        return
-
-    from .tuya_cloud import async_fetch_auth_key
-
-    for mac in missing:
-        try:
-            res = await async_fetch_auth_key(
-                hass, "", email, password, country, region, device_mac=mac,
-            )
-        except Exception as exc:
-            _LOGGER.warning("Backfill for %s failed: %s", mac, exc)
-            continue
-        updates = {
-            "local_key": res.get("local_key", ""),
-            "sec_key": res.get("sec_key", ""),
-            "check_code": res.get("check_code", ""),
-        }
-        if updates["local_key"] and updates["sec_key"]:
-            await device_store.async_update_device(mac, **updates)
-            _LOGGER.info(
-                "Backfilled btScyChannel fields for %s (check_code=%s)",
-                mac, updates["check_code"] or "<empty>",
-            )
-        else:
-            _LOGGER.warning(
-                "Backfill for %s incomplete: local_key=%s sec_key=%s",
-                mac, bool(updates["local_key"]), bool(updates["sec_key"]),
-            )
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
@@ -218,10 +161,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Create coordinators for each known device
     from .ble_session import TuyaBLELockSession
     from .coordinator import TuyaBLELockCoordinator
-
-    # Auto-migrate: fetch local_key/sec_key/check_code for devices stored
-    # before btScyChannel support was added (pre-v2.1 of the integration).
-    await _async_backfill_btsc_fields(hass, entry, device_store)
 
     coordinators: dict[str, TuyaBLELockCoordinator] = {}
     profiles: dict[str, dict] = {}

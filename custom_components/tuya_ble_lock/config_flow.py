@@ -413,5 +413,102 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     # ---- Reauth ----
 
-    async def async_step_reauth(self, user_input=None):
-        return await self.async_step_select_country()
+    async def async_step_reauth(self, entry_data: dict):
+        """Triggered when cloud credentials fail or user clicks 'Reconfigure'."""
+        self._email = entry_data.get(CONF_TUYA_EMAIL, "")
+        self._country = entry_data.get(CONF_TUYA_COUNTRY, "")
+        self._region = entry_data.get(CONF_TUYA_REGION, "")
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None):
+        """Ask for password (and country/region if missing), re-login, refresh
+        BLE credentials for every device in the store.
+
+        Use cases:
+          * Tuya password changed.
+          * Lock was re-paired in the Tuya app: localKey/secKey/check_code
+            all rotated and need to be pulled down again.
+        """
+        errors: dict[str, str] = {}
+        entry = self.hass.config_entries.async_get_entry(
+            self.context.get("entry_id", "")
+        )
+
+        if user_input:
+            password = user_input[CONF_PASSWORD]
+            country = user_input.get(CONF_TUYA_COUNTRY) or self._country
+            region = user_input.get(CONF_TUYA_REGION) or self._region
+
+            device_store = DeviceStore(self.hass)
+            await device_store.async_load()
+            refreshed = 0
+            login_failed = False
+
+            for mac, dev in list(device_store.devices.items()):
+                try:
+                    res = await async_fetch_auth_key(
+                        self.hass,
+                        dev.get("uuid", "") or "",
+                        self._email,
+                        password,
+                        country,
+                        region,
+                        device_mac=mac,
+                    )
+                except Exception as exc:
+                    msg = str(exc)
+                    _LOGGER.debug("Reauth fetch for %s failed: %s", mac, msg)
+                    if "login" in msg.lower():
+                        login_failed = True
+                        break
+                    continue
+
+                updates = {
+                    "local_key": res.get("local_key", "") or dev.get("local_key", ""),
+                    "sec_key": res.get("sec_key", "") or dev.get("sec_key", ""),
+                    "check_code": res.get("check_code", "") or dev.get("check_code", ""),
+                    "auth_key": res.get("auth_key", "") or dev.get("auth_key", ""),
+                }
+                # login_key/virtual_id derive from local_key + device_id
+                if updates["local_key"]:
+                    updates["login_key"] = updates["local_key"][:6].encode().hex()
+                dev_id = res.get("device_id") or ""
+                if dev_id:
+                    updates["virtual_id"] = (
+                        (dev_id.encode() + b"\x00" * 22)[:22]
+                    ).hex()
+                await device_store.async_update_device(mac, **updates)
+                refreshed += 1
+
+            if login_failed:
+                errors["base"] = "auth_key_failed"
+            else:
+                _LOGGER.info("Reauth complete: refreshed %d device(s)", refreshed)
+                if entry:
+                    self.hass.config_entries.async_update_entry(
+                        entry,
+                        data={
+                            CONF_TUYA_EMAIL: self._email,
+                            CONF_TUYA_PASSWORD: password,
+                            CONF_TUYA_COUNTRY: country,
+                            CONF_TUYA_REGION: region,
+                        },
+                    )
+                    await self.hass.config_entries.async_reload(entry.entry_id)
+                return self.async_abort(reason="reauth_successful")
+
+        # Build schema: password always, country/region only if missing
+        fields: dict = {vol.Required(CONF_PASSWORD): str}
+        if not self._country:
+            fields[vol.Required(CONF_TUYA_COUNTRY, default="31")] = str
+        if not self._region:
+            fields[vol.Required(CONF_TUYA_REGION, default="eu")] = vol.In(
+                list(REGION_OPTIONS.values())
+            )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema(fields),
+            errors=errors,
+            description_placeholders={"email": self._email or ""},
+        )
