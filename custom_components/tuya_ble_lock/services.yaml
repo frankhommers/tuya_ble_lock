@@ -63,12 +63,12 @@ add_fingerprint:
             - "Right index"
             - "Right middle"
             - "Right ring"
-            - "Right little"
+            - "Right pinky"
             - "Left thumb"
             - "Left index"
             - "Left middle"
             - "Left ring"
-            - "Left little"
+            - "Left pinky"
     admin:
       name: Admin credential
       required: false
