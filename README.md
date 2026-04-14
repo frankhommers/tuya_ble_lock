@@ -32,9 +32,21 @@ Forked from [tkhadimullin/tuya_ble_lock](https://github.com/tkhadimullin/tuya_bl
 |--------|-----------|------|----------|-------|
 | [Smart Lock 3](https://manuals.plus/asin/B0CD1CHYK8) | `qqmu5mit` | SYD8811 | V4 | DP 520 battery |
 | [H8 Pro](https://manuals.plus/asin/B0FDB2NSP3) | `wwbdbt3h` | — | V3 | Passage mode, auto-lock timer |
-| K3 BLE PRO 2 Keybox | `ba2qk177` | — | V4 | Smart keybox |
+| K3 BLE PRO 2 | `ba2qk177` | — | V5 (btScyChannel) | Fingerprint / code / card, doorbell |
 
 Other Tuya BLE locks in the `jtmspro` or `jtmsbh` categories will likely work with the default profile. See [Adding New Devices](#adding-new-devices) to create a profile for your lock.
+
+### Protocol Versions
+
+Tuya BLE firmwares use three incompatible framings. The integration detects which is in use automatically based on the keys present on the device record.
+
+| Protocol | Sec flags | Session key derivation | Used by |
+|----------|-----------|------------------------|---------|
+| V3 | 4 / 5 | `MD5(login_key[:6] [+ srand])` | 1910-service locks (H8 Pro) |
+| V4 | 4 / 5 | `MD5(login_key[:6] [+ srand])` | FD50-service locks (Smart Lock 3) |
+| V5 (btScyChannel) | 14 / 15 | `MD5(local_key + sec_key [+ srand])` | protocol 5.0 locks (K3 BLE PRO 2) |
+
+V5 devices advertise `btScyChannel: {"enable":1,...}` in cloud metadata and require both the 16-char `localKey` **and** the 16-char `secKey`, plus an 8-digit per-device check code (stored in cloud DP71 and sent with every unlock). All of these are fetched automatically at setup time. When a lock is re-paired in the Tuya app all three rotate — see [Reauthenticate](#reauthenticate) to refresh them without removing the device.
 
 ## Prerequisites
 
@@ -90,6 +102,10 @@ During setup, the integration logs into the Tuya cloud API to retrieve this key:
 - **The lock is not re-associated** — the integration simply reads the device's auth key
 - **No cloud connection for ongoing operations** — all lock/unlock commands happen entirely over local Bluetooth
 
+### Reauthenticate
+
+If your Tuya password changes, **or** a lock is re-paired in the Tuya app (which rotates `localKey`, `secKey` and the DP71 check code), use **Settings → Devices & Services → Tuya BLE Locks → Reconfigure**. Entering the new password re-logs into the cloud and refreshes the BLE credentials for every lock in the store — no need to remove and re-add the device.
+
 ### Coexistence with the Tuya App
 
 This integration does **not** remove your lock from the Tuya app. You can continue using both.
@@ -109,11 +125,17 @@ Each lock creates the following entities:
 |--------|------|-------------|
 | Lock | `lock` | Main lock/unlock control |
 | Battery | `sensor` | Battery percentage (0-100%) |
-| Battery state | `sensor` | Qualitative level: high, medium, low, exhausted |
+| Lock alarm | `sensor` | Last alarm reason (e.g. `low_battery`, `wrong_password`) |
+| Door | `sensor` | Door open/closed status (model-dependent) |
+| Last unlock | `sensor` | Most recent unlock method with `user_id` + `timestamp` attrs |
+| Doorbell | `binary_sensor` | Doorbell pressed (model-dependent) |
+| Hijack alarm | `binary_sensor` | Duress/hijack code triggered |
+| Message | `binary_sensor` | Lock has a pending message |
 | Privacy lock | `switch` | Electronic double-lock (DP 79) |
 | Passage mode | `switch` | Keep lock unlocked until manually locked (model-dependent) |
 | Persistent connection | `switch` | Keep BLE connection alive for instant response |
 | Volume | `select` | Keypad sound level |
+| Language / Unlock mode | `select` | Lock language / unlock method policy (model-dependent) |
 | Auto-lock delay | `number` | Seconds before auto-lock (model-dependent) |
 | Refresh status | `button` | Force a BLE status refresh |
 
@@ -283,7 +305,7 @@ To discover which DPs your lock supports, you'll need a Tuya IoT Platform develo
 | `entities.passage_mode_switch` | Passage mode (DP 33) |
 | `entities.auto_lock_time_number` | Auto-lock delay (DP 36) |
 | `state_map` | Maps incoming DPs to internal state keys |
-| `protocol_version` | 3 or 4 (default: 4) |
+| `protocol_version` | 3 or 4 (default: 4). V5 (btScyChannel) is auto-detected at runtime when the device record contains both `local_key` and `sec_key`. |
 
 ### Parse Types
 
@@ -314,9 +336,16 @@ To discover which DPs your lock supports, you'll need a Tuya IoT Platform develo
 ### Battery shows "Unknown"
 - Battery is polled every 12 hours — press "Refresh status" for immediate read
 
+### `No device info response` loop on a V5 lock
+- Happens when a lock that needs sec_flags 14/15 is stored without `local_key` / `sec_key`. This can occur after upgrading from a version without V5 support, or if the Tuya password changed.
+- Fix with **Reconfigure** on the hub (see [Reauthenticate](#reauthenticate)).
+
+### Unlock command succeeds but motor doesn't move (V5 locks)
+- The DP71 check code rotates every time the lock is re-paired in the Tuya app. If unlocks suddenly stop working after re-pairing, run **Reconfigure** to pull the fresh code from the cloud.
+
 ## Credits
 
-Based on [tkhadimullin/tuya_ble_lock](https://github.com/tkhadimullin/tuya_ble_lock) and the [python-tuya-ble](https://github.com/redphx/python-tuya-ble) protocol work by [redphx](https://github.com/redphx).
+Based on [tkhadimullin/tuya_ble_lock](https://github.com/tkhadimullin/tuya_ble_lock) and the [python-tuya-ble](https://github.com/redphx/python-tuya-ble) protocol work by [redphx](https://github.com/redphx). V5 / btScyChannel support was reverse-engineered from Tuya app sniffs; see `tools/k3_pro_2/` for the standalone scripts used.
 
 ## License
 
