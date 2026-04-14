@@ -189,8 +189,10 @@ class TuyaMobileAPIAsync:
         """Look up device info by MAC address via cloud API.
 
         Iterates homes and their devices, matching by MAC (case-insensitive,
-        colon-stripped). Returns dict with uuid, devId, localKey, name or None.
+        colon-stripped). Returns dict with uuid, devId, localKey, secKey,
+        check_code, name, productId or None.
         """
+        import base64
         mac_clean = device_mac.replace(":", "").upper()
         homes_resp = await self.async_get_home_list()
         homes_result = homes_resp.get("result", {})
@@ -206,14 +208,33 @@ class TuyaMobileAPIAsync:
                 devs_result = devs_result.get("result", [])
             for dev in devs_result:
                 dev_mac = (dev.get("mac") or "").replace(":", "").upper()
-                if dev_mac == mac_clean:
-                    return {
-                        "uuid": dev.get("uuid", ""),
-                        "devId": dev.get("devId", ""),
-                        "localKey": dev.get("localKey", ""),
-                        "name": dev.get("name", ""),
-                        "productId": dev.get("productId", ""),
-                    }
+                if dev_mac != mac_clean:
+                    continue
+                # Parse DP71 (ble_unlock_verify) for the 8-digit check code
+                check_code = ""
+                dpi = dev.get("dataPointInfo") or {}
+                if isinstance(dpi, str):
+                    try:
+                        dpi = json.loads(dpi)
+                    except Exception:
+                        dpi = {}
+                dp71 = (dpi.get("dps") or {}).get("71", "")
+                if isinstance(dp71, str) and dp71:
+                    try:
+                        raw = base64.b64decode(dp71)
+                        if len(raw) >= 12:
+                            check_code = raw[4:12].decode("ascii", errors="ignore")
+                    except Exception:
+                        pass
+                return {
+                    "uuid": dev.get("uuid", ""),
+                    "devId": dev.get("devId", ""),
+                    "localKey": dev.get("localKey", ""),
+                    "secKey": dev.get("secKey", ""),
+                    "checkCode": check_code,
+                    "name": dev.get("name", ""),
+                    "productId": dev.get("productId", ""),
+                }
         return None
 
 
@@ -299,6 +320,8 @@ async def async_fetch_auth_key(
         "auth_key": auth_key,
         "uuid": resolved_uuid,
         "local_key": cloud_info.get("localKey", ""),
+        "sec_key": cloud_info.get("secKey", ""),
+        "check_code": cloud_info.get("checkCode", ""),
         "device_id": cloud_info.get("devId", ""),
         "name": cloud_info.get("name", ""),
         "product_id": cloud_info.get("productId", ""),

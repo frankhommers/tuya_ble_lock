@@ -251,6 +251,9 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "auth_key": auth_key,
                     "product_id": product_id,
                     "name": name,
+                    "local_key": local_key,
+                    "sec_key": cloud_result.get("sec_key", ""),
+                    "check_code": cloud_result.get("check_code", ""),
                 },
             )
             _LOGGER.info("Auto-added device %s (%s) to hub", name, self._mac)
@@ -386,6 +389,9 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "auth_key": auth_key,
                     "product_id": product_id,
                     "name": name,
+                    "local_key": local_key,
+                    "sec_key": cloud_result.get("sec_key", ""),
+                    "check_code": cloud_result.get("check_code", ""),
                 },
             )
 

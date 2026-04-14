@@ -27,6 +27,9 @@ SEC_AUTH_SESSION = 2
 SEC_LOGIN_KEY   = 4
 SEC_SESSION_KEY = 5
 SEC_COMM_KEY    = 6
+# btScyChannel (new security) — used by K3 BLE PRO 2 and similar protocol 5.0 locks
+SEC_NEW_SEC         = 14  # key = MD5(local_key + sec_key)
+SEC_NEW_SEC_SESSION = 15  # key = MD5(local_key + sec_key + srand)
 
 # Credential types
 CRED_PASSWORD    = 0x01
@@ -62,3 +65,7 @@ CONF_LOGIN_KEY    = "login_key"
 CONF_VIRTUAL_ID   = "virtual_id"
 CONF_AUTH_KEY     = "auth_key"
 CONF_PRODUCT_ID   = "product_id"
+# btScyChannel credentials
+CONF_LOCAL_KEY   = "local_key"   # full 16-char local_key (ASCII) from cloud
+CONF_SEC_KEY     = "sec_key"     # 16-char sec_key from cloud
+CONF_CHECK_CODE  = "check_code"  # 8-digit unlock verification code (from cloud DP71)

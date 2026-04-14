@@ -176,6 +176,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         device_uuid = dev_data.get("uuid", "")
         product_id = dev_data.get("product_id")
         device_name = dev_data.get("name", mac)
+        local_key_str = dev_data.get("local_key") or ""
+        sec_key_str = dev_data.get("sec_key") or ""
+        local_key_b = local_key_str.encode("utf-8") if local_key_str else None
+        sec_key_b = sec_key_str.encode("utf-8") if sec_key_str else None
 
         profile = await async_load_profile(hass, product_id)
         profiles[mac] = profile
@@ -184,6 +188,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         session = TuyaBLELockSession(
             hass, ble_device, login_key, virtual_id, device_uuid,
             protocol_version=protocol_version,
+            local_key=local_key_b,
+            sec_key=sec_key_b,
         )
 
         coordinator = TuyaBLELockCoordinator(

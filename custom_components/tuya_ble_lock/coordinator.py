@@ -304,23 +304,30 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
                 raise UpdateFailed("BLE connection to lock failed")
 
     def _build_unlock_payload(self, action_unlock: bool) -> bytes:
-        """Build unlock/lock DP RAW payload.
+        """Build unlock/lock DP RAW payload (19 bytes).
 
-        Format (19 bytes, standard Tuya BLE lock):
-          [00 01]       version (2B)
-          [ff ff]       member_id (2B, 0xFFFF = admin)
-          [8B ASCII]    check code
+        Format confirmed by sniff of Tuya app on K3 BLE PRO 2:
+          [ff ff]       member_id (0xFFFF = admin)
+          [00 01]       version
+          [8B ASCII]    check code (from cloud DP71, per-device)
           [01/00]       action: 01=unlock, 00=lock
           [4B BE]       Unix timestamp
-          [00 00]       padding
+          [00 01]       trailer (observed in app sniff)
+
+        Note: the DP report echoes back with member/version swapped
+        ([00 01][ff ff]) and trailer 00 00 — that's the report format,
+        not the write format.
         """
-        code = (DEFAULT_CHECK_CODE + b"\x00" * 8)[:8]
+        code_str = self._device_data.get("check_code") or ""
+        code = (code_str.encode("ascii") + b"\x00" * 8)[:8] if code_str else (
+            DEFAULT_CHECK_CODE + b"\x00" * 8
+        )[:8]
         ts = int(time.time())
-        payload = struct.pack(">HH", 1, 0xFFFF)
+        payload = struct.pack(">HH", 0xFFFF, 1)
         payload += code
         payload += bytes([0x01 if action_unlock else 0x00])
         payload += struct.pack(">I", ts)
-        payload += b"\x00\x00"
+        payload += b"\x00\x01"
         return payload
 
     def _get_unlock_dp(self) -> int:

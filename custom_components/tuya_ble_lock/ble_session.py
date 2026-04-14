@@ -37,6 +37,8 @@ from .const import (
     SEC_AUTH_SESSION,
     SEC_LOGIN_KEY,
     SEC_SESSION_KEY,
+    SEC_NEW_SEC,
+    SEC_NEW_SEC_SESSION,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,6 +60,8 @@ class TuyaBLELockSession:
         device_uuid: str,
         auth_key: bytes | None = None,
         protocol_version: int = 4,
+        local_key: bytes | None = None,
+        sec_key: bytes | None = None,
     ):
         self._hass = hass
         self._ble_device = ble_device
@@ -66,9 +70,20 @@ class TuyaBLELockSession:
         self._device_uuid = device_uuid
         self._auth_key = auth_key
         self._protocol_version = protocol_version
+        # btScyChannel ("new security") credentials: when both local_key and sec_key
+        # are set, session uses sec_flags 14/15 instead of 4/5.
+        self._local_key = local_key
+        self._sec_key = sec_key
+        self._btsc = bool(local_key and sec_key)
         self._client: BleakClient | None = None
         self._seq = ble_protocol.SequenceCounter()
         self._keys: dict[int, bytes] = {}
+        if self._btsc:
+            # KEY14 = MD5(local_key + sec_key) — used for DEVICE_INFO.
+            # KEY15 derived after DEVICE_INFO response provides srand.
+            self._keys[SEC_NEW_SEC] = hashlib.md5(
+                self._local_key + self._sec_key
+            ).digest()
         if login_key:
             self._keys[SEC_LOGIN_KEY] = hashlib.md5(login_key).digest()
         if auth_key:
@@ -143,14 +158,19 @@ class TuyaBLELockSession:
     def _derive_session(self, srand: bytes) -> None:
         """Derive session keys from srand.
 
-        keys[5] = MD5(login_key + srand) — for bound device reconnect
-        keys[2] = MD5(auth_key_hex + srand) — for first activation
+        keys[5]  = MD5(login_key + srand) — for bound device reconnect
+        keys[2]  = MD5(auth_key_hex + srand) — for first activation
+        keys[15] = MD5(local_key + sec_key + srand) — btScyChannel session
         """
         self._session_key = hashlib.md5(self._login_key + srand).digest()
         self._keys[SEC_SESSION_KEY] = self._session_key
         if self._auth_key:
             combined = self._auth_key.hex().encode("ascii") + srand
             self._keys[SEC_AUTH_SESSION] = hashlib.md5(combined).digest()
+        if self._btsc:
+            self._keys[SEC_NEW_SEC_SESSION] = hashlib.md5(
+                self._local_key + self._sec_key + srand
+            ).digest()
 
     async def _send_encrypted(
         self, cmd: int, data: bytes, sec_flag: int, ack_sn: int = 0
@@ -238,6 +258,11 @@ class TuyaBLELockSession:
                     )
             return frames
 
+    @property
+    def _session_sec(self) -> int:
+        """Sec flag used for session-encrypted commands after PAIR."""
+        return SEC_NEW_SEC_SESSION if self._btsc else SEC_SESSION_KEY
+
     async def _handle_time_requests(self, frames: list[dict]) -> None:
         """Respond to device time sync requests."""
         for f in frames:
@@ -246,7 +271,7 @@ class TuyaBLELockSession:
                 ts = str(int(time.time() * 1000)).encode()
                 tz = struct.pack(">h", -int(time.timezone / 36))
                 await self._send_encrypted(
-                    cmd, ts + tz, SEC_SESSION_KEY, ack_sn=f["sn"]
+                    cmd, ts + tz, self._session_sec, ack_sn=f["sn"]
                 )
             elif cmd == CMD_TIME_V2:
                 t = time.localtime()
@@ -262,7 +287,7 @@ class TuyaBLELockSession:
                     t.tm_wday,
                     tz,
                 )
-                await self._send_encrypted(cmd, td, SEC_SESSION_KEY, ack_sn=f["sn"])
+                await self._send_encrypted(cmd, td, self._session_sec, ack_sn=f["sn"])
 
     async def _collect(self, timeout: float = 3.0) -> list[dict]:
         """Collect unsolicited reports (DP reports, time requests).
@@ -409,69 +434,26 @@ class TuyaBLELockSession:
                 await self._client.start_notify(notify_uuid, self._on_notify)
                 self.is_connected = True
 
-                # Some devices (e.g. H8 Pro with service 1910) auto-push
-                # DEVICE_INFO + PAIR + TIME + DPs after notification enable.
-                # Wait for auto-push, then try explicit DEVICE_INFO if nothing arrived.
-                # Note: some devices send PAIR/TIME BEFORE DEVICE_INFO, so we
-                # wait the full timeout and try to parse what we have.
-                deadline_auto = time.monotonic() + 3.5
-                got_data = False
-                while time.monotonic() < deadline_auto:
-                    await asyncio.sleep(0.2)
-                    if self._notif_buf:
-                        got_data = True
-                        # Try parsing what we have — break if we can decode DEVICE_INFO
-                        raw_peek = list(self._notif_buf)
-                        peek_frames = parse_frames(self._keys, raw_peek)
-                        if any(
-                            f["cmd"] == CMD_DEVICE_INFO and len(f["data"]) >= 12
-                            for f in peek_frames
-                        ):
-                            await asyncio.sleep(0.5)  # let remaining fragments arrive
-                            break
-
-                raw = list(self._notif_buf)
-                self._notif_buf.clear()
-
-                if not got_data:
-                    # Diagnostic: try reading char 3 to check proxy relay
-                    read_uuid = "00000003-0000-1001-8001-00805f9b07d0"
-                    try:
-                        read_data = await self._client.read_gatt_char(read_uuid)
-                        _LOGGER.debug(
-                            "GATT READ char3: %s",
-                            read_data.hex() if read_data else "empty",
-                        )
-                    except Exception as exc:
-                        _LOGGER.debug("GATT READ char3 failed: %s", exc)
-
-                    # Try device info with multiple sec_flags
-                    for try_sec in [SEC_LOGIN_KEY, SEC_NONE]:
-                        _LOGGER.debug("Sending device info (sec_flag=%d)", try_sec)
-                        self._notif_buf.clear()
-                        await self._send_encrypted(CMD_DEVICE_INFO, mtu_data, try_sec)
-                        deadline_di = time.monotonic() + 4.0
-                        while time.monotonic() < deadline_di:
+                # Send DEVICE_INFO immediately. For btsc (new-security) devices
+                # use sec_flag 14; for legacy devices try sec_flag 4 then 0.
+                sec_flags_to_try = (
+                    [SEC_NEW_SEC] if self._btsc else [SEC_LOGIN_KEY, SEC_NONE]
+                )
+                raw = []
+                for try_sec in sec_flags_to_try:
+                    _LOGGER.debug("Sending device_info (sec_flag=%d)", try_sec)
+                    self._notif_buf.clear()
+                    await self._send_encrypted(CMD_DEVICE_INFO, mtu_data, try_sec)
+                    deadline_di = time.monotonic() + 3.0
+                    while time.monotonic() < deadline_di:
+                        await asyncio.sleep(0.1)
+                        if self._notif_buf:
                             await asyncio.sleep(0.2)
-                            if self._notif_buf:
-                                await asyncio.sleep(0.3)
-                                break
+                            break
+                    if self._notif_buf:
                         raw = list(self._notif_buf)
                         self._notif_buf.clear()
-                        if raw:
-                            _LOGGER.debug("Got response with sec_flag=%d", try_sec)
-                            break
-                        # Also try reading char 3 after write
-                        try:
-                            read_data = await self._client.read_gatt_char(read_uuid)
-                            if read_data and len(read_data) > 0:
-                                _LOGGER.debug(
-                                    "GATT READ char3 after write: %s", read_data.hex()
-                                )
-                                raw = [read_data]
-                                break
-                        except Exception:
-                            pass
+                        break
 
                 if not raw:
                     _LOGGER.debug("No device info response on attempt %d", attempt + 1)
@@ -522,49 +504,40 @@ class TuyaBLELockSession:
         self._derive_session(srand)
         await self._handle_time_requests(frames)
 
-        # After deriving session key, collect remaining auto-pushed data
-        # (PAIR + TIME_REQUEST + DPs arrive ~0.3s after DEVICE_INFO)
-        post_di = await self._collect(timeout=3.5)
-        _LOGGER.debug(
-            "Post-DEVICE_INFO collect: %d frames: %s",
-            len(post_di),
-            [(f["cmd"], f.get("sec_flag")) for f in post_di],
-        )
-        all_frames = frames + post_di
-        self._dispatch_dp_reports(post_di)
-
-        # Check if PAIR was already auto-pushed (e.g. H8 Pro)
-        pair_already = any(f["cmd"] == CMD_PAIR for f in all_frames)
-        if pair_already:
-            _LOGGER.debug("PAIR already received in auto-push, skipping pair command")
+        # Build PAIR payload. Legacy: uuid(16)+login6+virtual(22) padded to 44.
+        # btScyChannel: uuid(16)+login6+virtual(22)+local_key(16)+sec_key(16) = 76.
+        uuid_bytes = self._device_uuid.encode()[:16]
+        pair_data = uuid_bytes + self._login_key + self._virtual_id[:22]
+        if self._btsc:
+            pair_data += self._local_key[:16] + self._sec_key[:16]
         else:
-            # Pair/reauth: uuid(16) + login_key(6) + virtual_id(22) padded to 44
-            uuid_bytes = self._device_uuid.encode()[:16]
-            pair_data = uuid_bytes + self._login_key + self._virtual_id[:22]
             pair_data = (pair_data + b"\x00" * 44)[:44]
 
-            self._notif_buf.clear()
-            await self._send_encrypted(CMD_PAIR, pair_data, SEC_SESSION_KEY)
-            # Poll until pair response arrives instead of flat 3s wait
-            deadline_pr = time.monotonic() + 3.0
-            while time.monotonic() < deadline_pr:
-                await asyncio.sleep(0.2)
-                if self._notif_buf:
-                    await asyncio.sleep(0.3)
-                    break
+        pair_sec = self._session_sec
+        self._notif_buf.clear()
+        await self._send_encrypted(CMD_PAIR, pair_data, pair_sec)
 
-            raw = list(self._notif_buf)
-            self._notif_buf.clear()
-            if raw:
-                pair_frames = parse_frames(self._keys, raw)
+        # Poll for PAIR response; also handle TIME_V1 (lock sends it right after PAIR)
+        deadline_pr = time.monotonic() + 4.0
+        pair_ok = False
+        while time.monotonic() < deadline_pr:
+            await asyncio.sleep(0.15)
+            if self._notif_buf:
+                raw_p = list(self._notif_buf)
+                self._notif_buf.clear()
+                pair_frames = parse_frames(self._keys, raw_p)
                 await self._handle_time_requests(pair_frames)
                 self._dispatch_dp_reports(pair_frames)
-            else:
-                _LOGGER.debug("No pair/reauth response (may be OK)")
-
-        # Collect extra unsolicited reports (DP reports, time requests)
-        extra = await self._collect(timeout=1.5)
-        self._dispatch_dp_reports(extra)
+                for pf in pair_frames:
+                    if pf["cmd"] == CMD_PAIR and pf.get("data", b"")[:1] in (
+                        b"\x00",
+                        b"\x02",
+                    ):
+                        pair_ok = True
+                if pair_ok:
+                    break
+        if not pair_ok:
+            _LOGGER.debug("No explicit PAIR OK seen (may still be usable)")
 
         # Note: volume safety check removed — DP 71 (ble_unlock_check) works even with mute.
         # DP 46 (manual_lock) still requires volume=normal, but we no longer use it.
@@ -603,7 +576,7 @@ class TuyaBLELockSession:
         """Send a DP write without waiting for response. Used for lock/unlock."""
         cmd, payload = self._build_dp_payload(dp_id, dp_type, value)
         async with self._lock:
-            await self._send_encrypted(cmd, payload, SEC_SESSION_KEY)
+            await self._send_encrypted(cmd, payload, self._session_sec)
             # Brief wait to ensure BLE write completes before disconnect
             await asyncio.sleep(0.3)
 
@@ -612,7 +585,7 @@ class TuyaBLELockSession:
     ) -> dict | None:
         """Send a DP write and return the matching DP from the response."""
         cmd, payload = self._build_dp_payload(dp_id, dp_type, value)
-        frames = await self._send_recv(cmd, payload, SEC_SESSION_KEY)
+        frames = await self._send_recv(cmd, payload, self._session_sec)
         await self._handle_time_requests(frames)
         self._dispatch_dp_reports(frames)
         for f in frames:
@@ -641,9 +614,9 @@ class TuyaBLELockSession:
         _LOGGER.debug(
             "Sending status query (CMD=0x%04x, sec=%d)",
             CMD_DEVICE_STATUS,
-            SEC_SESSION_KEY,
+            self._session_sec,
         )
-        frames = await self._send_recv(CMD_DEVICE_STATUS, b"", SEC_SESSION_KEY)
+        frames = await self._send_recv(CMD_DEVICE_STATUS, b"", self._session_sec)
         await self._handle_time_requests(frames)
         results: list[dict] = []
         for f in frames:
@@ -674,7 +647,7 @@ class TuyaBLELockSession:
         progress reports over 30-60 seconds.
         """
         cmd, initial_payload = self._build_dp_payload(dp_id, 0, payload)
-        frames = await self._send_recv(cmd, initial_payload, SEC_SESSION_KEY, wait=10.0)
+        frames = await self._send_recv(cmd, initial_payload, self._session_sec, wait=10.0)
         await self._handle_time_requests(frames)
         results: list[dict] = []
         for f in frames:
