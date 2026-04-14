@@ -218,19 +218,4 @@ class TuyaBLEDiagnosticSensor(TuyaBLELockEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        val = self.coordinator.device_data.get(self._data_key)
-        if not isinstance(val, str):
-            return val
-        # Diagnostic values (hex keys, virtual_ids) are long and noisy in
-        # the UI. Show a short preview; the full value is still available as
-        # an attribute for anyone who needs to copy it.
-        if len(val) > 16:
-            return f"{val[:8]}…{val[-4:]}"
-        return val
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        val = self.coordinator.device_data.get(self._data_key)
-        if isinstance(val, str) and len(val) > 16:
-            return {"full_value": val, "length": len(val)}
-        return {}
+        return self.coordinator.device_data.get(self._data_key)
