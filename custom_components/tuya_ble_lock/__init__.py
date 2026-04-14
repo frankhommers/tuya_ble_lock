@@ -202,6 +202,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass, entry, mac, device_name, dev_data,
             ble_device, session, profile,
         )
+        # Seed state from last-known cloud DP snapshot so event-only
+        # entities (doorbell, hijack, last unlock, door, manual_lock,
+        # auto_lock_time…) aren't 'unknown' on startup. BLE pushes will
+        # overwrite these as real events occur.
+        cloud_dps = dev_data.get("cloud_dps") or {}
+        if cloud_dps:
+            try:
+                coordinator.apply_cloud_dps(cloud_dps)
+            except Exception:
+                _LOGGER.debug("Cloud DP seed failed for %s", mac, exc_info=True)
         coordinators[mac] = coordinator
 
         # One-shot status fetch in background

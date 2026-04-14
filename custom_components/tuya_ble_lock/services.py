@@ -390,8 +390,10 @@ async def async_register_services(hass: HomeAssistant) -> None:
         return {"credentials": result}
 
     async def handle_refresh_cloud_credentials(call: ServiceCall) -> None:
-        """Re-login to the Tuya cloud and refresh BLE keys for every stored
-        device. Use after re-pairing a lock in the Tuya app.
+        """Re-login to Tuya cloud, refresh BLE keys AND pull the current DP
+        snapshot to seed entity state. Use after re-pairing a lock in the
+        Tuya app, or when sensors that only populate on events (doorbell,
+        hijack, last unlock) show as 'unknown' on first setup.
         """
         from .const import (
             CONF_TUYA_EMAIL, CONF_TUYA_PASSWORD,
@@ -439,6 +441,12 @@ async def async_register_services(hass: HomeAssistant) -> None:
                 updates["virtual_id"] = (
                     (dev_id.encode() + b"\x00" * 22)[:22]
                 ).hex()
+            # Persist cloud DP snapshot; __init__.py seeds coordinator.state
+            # from it on (re)load so entities for event-only DPs (doorbell,
+            # hijack, last unlock, door, manual_lock, auto_lock_time…) aren't
+            # stuck at 'unknown'.
+            if res.get("dps"):
+                updates["cloud_dps"] = res["dps"]
             await device_store.async_update_device(mac, **updates)
             refreshed += 1
             _LOGGER.info(
@@ -450,7 +458,10 @@ async def async_register_services(hass: HomeAssistant) -> None:
             )
         _LOGGER.info("Cloud refresh complete: %d/%d device(s) updated",
                      refreshed, len(device_store.devices))
-        # Reload the hub entry so coordinators pick up the new creds
+        # Reload the hub entry so coordinators pick up the new creds. Note
+        # this rebuilds state from scratch — apply_cloud_dps above seeds the
+        # *pre-reload* coordinators; post-reload we rely on BLE push reports
+        # and the next successful CMD_DEVICE_STATUS.
         await hass.config_entries.async_reload(entry.entry_id)
 
     hass.services.async_register(DOMAIN, "add_pin", handle_add_pin, schema=ADD_PIN_SCHEMA)

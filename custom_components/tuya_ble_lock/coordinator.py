@@ -100,6 +100,52 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
         67: "offline_code",
     }
 
+    def apply_cloud_dps(self, cloud_dps: dict) -> None:
+        """Populate coordinator.state from a cloud DP snapshot.
+
+        cloud_dps comes from the Tuya mobile API — values are scalars
+        (int/bool/str) or base64 blobs for RAW DPs. Unlike BLE DP reports
+        (which are already bytes), these need type-aware interpretation
+        before we can feed them through the profile's state_map.
+        """
+        import base64
+        state_map = self._profile.get("state_map", {})
+        changed = False
+        for dp_id_str, raw_val in (cloud_dps or {}).items():
+            mapping = state_map.get(dp_id_str)
+            if not mapping:
+                continue
+            key = mapping.get("key", "")
+            parse_type = mapping.get("parse", "")
+            if not key or key == "_ignore" or parse_type == "ignore":
+                continue
+
+            new_val: Any
+            if parse_type == "bool":
+                new_val = bool(raw_val) if not isinstance(raw_val, str) else (
+                    raw_val.lower() in ("true", "1", "yes", "on")
+                )
+            elif parse_type == "int":
+                try:
+                    new_val = int(raw_val)
+                except (TypeError, ValueError):
+                    continue
+            elif parse_type in ("enum_string", "raw_byte"):
+                # enum_string → cloud sends the enum label directly
+                # raw_byte → cloud also sends the enum label (BLE returns index)
+                new_val = raw_val
+            elif parse_type == "battery_state_enum":
+                new_val = raw_val
+            else:
+                new_val = raw_val
+
+            if self.state.get(key) != new_val:
+                self.state[key] = new_val
+                changed = True
+
+        if changed:
+            self.async_set_updated_data(self.state)
+
     def _process_dp_reports(self, dps: list[dict]) -> None:
         """Update state from DP reports using profile's state_map."""
         _LOGGER.debug("Processing %d DPs: %s", len(dps),

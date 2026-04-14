@@ -254,6 +254,7 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "local_key": local_key,
                     "sec_key": cloud_result.get("sec_key", ""),
                     "check_code": cloud_result.get("check_code", ""),
+                    "cloud_dps": cloud_result.get("dps") or {},
                 },
             )
             _LOGGER.info("Auto-added device %s (%s) to hub", name, self._mac)
@@ -392,6 +393,7 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "local_key": local_key,
                     "sec_key": cloud_result.get("sec_key", ""),
                     "check_code": cloud_result.get("check_code", ""),
+                    "cloud_dps": cloud_result.get("dps") or {},
                 },
             )
 
@@ -502,6 +504,8 @@ class TuyaBLELockConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     updates["virtual_id"] = (
                         (dev_id.encode() + b"\x00" * 22)[:22]
                     ).hex()
+                if res.get("dps"):
+                    updates["cloud_dps"] = res["dps"]
                 await device_store.async_update_device(mac, **updates)
                 refreshed += 1
 

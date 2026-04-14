@@ -234,6 +234,10 @@ class TuyaMobileAPIAsync:
                     "checkCode": check_code,
                     "name": dev.get("name", ""),
                     "productId": dev.get("productId", ""),
+                    # Full current DP snapshot (as reported to the cloud). Values
+                    # are either scalars (int/bool/str) or base64-encoded raw bytes
+                    # for RAW-type DPs.
+                    "dps": dpi.get("dps") or {},
                 }
         return None
 
@@ -325,4 +329,5 @@ async def async_fetch_auth_key(
         "device_id": cloud_info.get("devId", ""),
         "name": cloud_info.get("name", ""),
         "product_id": cloud_info.get("productId", ""),
+        "dps": cloud_info.get("dps") or {},
     }
