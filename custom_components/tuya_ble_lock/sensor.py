@@ -8,23 +8,10 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import PERCENTAGE
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .entity import TuyaBLELockEntity
 from .models import TuyaBLELockData
-
-_DIAG_KEYS = [
-    ("uuid", "UUID", "uuid"),
-    ("login_key", "Login key", "login_key"),
-    ("virtual_id", "Virtual ID", "virtual_id"),
-    ("auth_key", "Auth key", "auth_key"),
-    # V5 / btScyChannel credentials — present only after reauth or on
-    # freshly-added devices. Diagnostic so users can confirm reauth ran.
-    ("local_key", "Local key", "local_key"),
-    ("sec_key", "Sec key", "sec_key"),
-    ("check_code", "Check code", "check_code"),
-]
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -48,16 +35,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
             (m.get("key") or "").startswith("unlock_") for m in state_map.values()
         ):
             entities.append(TuyaBLELastUnlockSensor(coordinator, entry))
-        for data_key, name, uid_suffix in _DIAG_KEYS:
-            entities.append(
-                TuyaBLEDiagnosticSensor(
-                    coordinator,
-                    entry,
-                    data_key,
-                    name,
-                    uid_suffix,
-                )
-            )
     if entities:
         async_add_entities(entities)
 
@@ -200,27 +177,3 @@ class TuyaBLELastUnlockSensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
                 self.coordinator.state["last_unlock_method"] = last.state
 
 
-class TuyaBLEDiagnosticSensor(TuyaBLELockEntity, SensorEntity):
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_entity_registry_enabled_default = False
-
-    def __init__(self, coordinator, entry, data_key: str, name: str, uid_suffix: str):
-        super().__init__(coordinator, entry)
-        # Set name *after* super() so the parent's __init__ can't wipe it
-        # back to None. Also set translation_key so the UI can localise.
-        self._attr_name = name
-        self._attr_translation_key = uid_suffix
-        self._uid_suffix = uid_suffix
-        self._data_key = data_key
-
-    @property
-    def unique_id(self):
-        return f"{self._mac}_{self._uid_suffix}"
-
-    @property
-    def available(self) -> bool:
-        return True
-
-    @property
-    def native_value(self) -> str | None:
-        return self.coordinator.device_data.get(self._data_key)
