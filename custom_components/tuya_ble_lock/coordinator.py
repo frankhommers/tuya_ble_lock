@@ -187,8 +187,14 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
             self._idle_timer = None
         if not self._persistent_connection:
             loop = self.hass.loop
+            # Stay connected long enough to see the auto-lock DP 47 push
+            # when auto_lock_time is configured higher than our default.
+            delay = max(
+                IDLE_DISCONNECT_SECONDS,
+                int(self.state.get("auto_lock_time") or 0) + 10,
+            )
             self._idle_timer = loop.call_later(
-                IDLE_DISCONNECT_SECONDS, lambda: asyncio.ensure_future(self._idle_disconnect())
+                delay, lambda: asyncio.ensure_future(self._idle_disconnect())
             )
         # Start background listener if not already running
         self._start_listener()
