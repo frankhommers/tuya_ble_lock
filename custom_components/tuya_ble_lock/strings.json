@@ -70,8 +70,8 @@
       "auto_lock_time": { "name": "Auto-lock delay" }
     },
     "button": {
-      "refresh": { "name": "Refresh status" },
-      "cloud_refresh": { "name": "Refresh via cloud" }
+      "refresh": { "name": "Refresh status locally" },
+      "cloud_refresh": { "name": "Refresh status via cloud" }
     },
     "binary_sensor": {
       "doorbell": { "name": "Doorbell" },

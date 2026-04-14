@@ -27,7 +27,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class TuyaBLERefreshStatusButton(TuyaBLELockEntity, ButtonEntity):
     """Pull the lock's current state over BLE (battery, motor, settings)."""
 
-    _attr_name = "Refresh status"
+    _attr_name = "Refresh status locally"
     _attr_icon = "mdi:refresh"
     _attr_entity_category = EntityCategory.CONFIG
 
@@ -47,7 +47,7 @@ class TuyaBLECloudRefreshButton(TuyaBLELockEntity, ButtonEntity):
     event-only sensors (doorbell, hijack, last unlock) from cloud state.
     """
 
-    _attr_name = "Refresh via cloud"
+    _attr_name = "Refresh status via cloud"
     _attr_icon = "mdi:cloud-refresh"
     _attr_entity_category = EntityCategory.CONFIG
 
