@@ -19,7 +19,12 @@ from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 
 from . import ble_protocol
-from .ble_protocol import parse_dp_report, parse_dp_report_v3, parse_frames
+from .ble_protocol import (
+    parse_dp_report,
+    parse_dp_report_v3,
+    parse_event_record,
+    parse_frames,
+)
 from .const import (
     WRITE_UUID,
     NOTIFY_UUID,
@@ -32,6 +37,7 @@ from .const import (
     CMD_TIME_V2,
     CMD_RECV_DP,
     CMD_DP_REPORT_V4,
+    CMD_DP_EVENT_V4,
     SEC_NONE,
     SEC_AUTH_KEY,
     SEC_AUTH_SESSION,
@@ -318,10 +324,20 @@ class TuyaBLELockSession:
 
     @staticmethod
     def _extract_dps_from_frame(f: dict) -> list[dict]:
-        """Extract DPs from a single frame (V4 or V3 format)."""
-        if f["cmd"] == CMD_DP_REPORT_V4:
+        """Extract DPs from a single frame.
+
+        State snapshots (cmd=0x8006) and event records (cmd=0x8007) both
+        carry DP data — the latter being push notifications for things like
+        keypad unlock attempts, wrong_finger / wrong_password alarms,
+        doorbell presses and hijack triggers. Ignore either and you miss
+        half of what the lock is telling you.
+        """
+        cmd = f["cmd"]
+        if cmd == CMD_DP_REPORT_V4:
             return parse_dp_report(f["data"])
-        if f["cmd"] == CMD_RECV_DP:
+        if cmd == CMD_DP_EVENT_V4:
+            return parse_event_record(f["data"])
+        if cmd == CMD_RECV_DP:
             return parse_dp_report_v3(f["data"])
         return []
 

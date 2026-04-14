@@ -19,6 +19,7 @@ CMD_TIME_V1        = 0x8011
 CMD_TIME_V2        = 0x8012
 CMD_RECV_DP        = 0x8001
 CMD_DP_REPORT_V4   = 0x8006
+CMD_DP_EVENT_V4    = 0x8007
 
 # Security flags
 SEC_NONE        = 0

@@ -41,7 +41,9 @@ def _load(name: str):
     return mod
 
 
-parse_dp_report = _load("ble_protocol").parse_dp_report
+_ble_protocol = _load("ble_protocol")
+parse_dp_report = _ble_protocol.parse_dp_report
+parse_event_record = _ble_protocol.parse_event_record
 
 _PROFILE_DIR = ROOT / "device_profiles"
 
@@ -115,6 +117,20 @@ def test_single_dp71_echo_still_decodes_after_parser_switch():
     assert dp["len"] == 19
     assert dp["raw"].startswith(b"\x00\x01\xff\xff")
     assert b"35273686" in dp["raw"]  # check code visible in echo
+
+
+def test_event_record_extracts_dp_and_timestamp():
+    """cmd=0x8007 event record carrying DP19 (BLE unlock, user_id 1)
+    captured from the user's log at 2026-04-14 17:11:32.867."""
+    data = bytes.fromhex("00000000ec00000169de59211302000400000001")
+    dps = parse_event_record(data)
+    assert len(dps) == 1
+    dp = dps[0]
+    assert dp["id"] == 19        # ble_unlock
+    assert dp["type"] == 2       # value
+    assert dp["len"] == 4
+    assert int.from_bytes(dp["raw"], "big") == 1   # user_id 1
+    assert dp["event_ts"] == 0x69DE5921  # timestamp attached
 
 
 def test_two_byte_dp_id_fallback_smart_lock3_style():

@@ -296,6 +296,47 @@ def parse_dp_report(data: bytes) -> list[dict]:
     return best_dps
 
 
+def parse_event_record(data: bytes) -> list[dict]:
+    """Parse a cmd=0x8007 event-record frame.
+
+    This is what the lock uses to notify the app of 'things that happened'
+    with a timestamp attached — BLE/keypad unlock attempts, alarm_lock
+    events (wrong_finger / wrong_password / low_battery / pry / etc.),
+    doorbell presses, hijack / duress triggers. Unlike cmd=0x8006 which is
+    a state snapshot, 0x8007 is an event log entry.
+
+    Observed layout:
+      [sn:4][event_id:4][timestamp:4][dp:1][type:1][len:2][val]…
+
+    The timestamp is a Unix epoch; we attach it to every extracted DP so
+    downstream state handlers can tell 'this happened now' from 'this is
+    the last-known value'.
+    """
+    if len(data) < 12:
+        return []
+    klv = data[12:]
+    dps = []
+    pos = 0
+    ts_bytes = data[8:12]
+    try:
+        ts = int.from_bytes(ts_bytes, "big")
+    except Exception:
+        ts = 0
+    while pos + 4 <= len(klv):
+        dp_id = klv[pos]
+        dp_type = klv[pos + 1]
+        dp_len = struct.unpack(">H", klv[pos + 2:pos + 4])[0]
+        if pos + 4 + dp_len > len(klv):
+            break
+        val = klv[pos + 4:pos + 4 + dp_len]
+        dps.append({
+            "id": dp_id, "type": dp_type, "len": dp_len,
+            "raw": val, "event_ts": ts,
+        })
+        pos += 4 + dp_len
+    return dps
+
+
 def parse_dp_report_v3(data: bytes) -> list[dict]:
     """Parse V3 DP report (RECV_DP 0x8001): [dp_id(1)][type(1)][len(1)][val]..."""
     dps = []
