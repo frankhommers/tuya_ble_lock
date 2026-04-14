@@ -38,13 +38,15 @@
     }
   },
   "services": {
-    "add_pin": { "dp": 1 },
-    "delete_credential": { "dp": 2 },
-    "modify_credential": { "dp": 3 },
+    "add_pin":             { "dp": 1 },
+    "add_fingerprint":     { "dp": 1 },
+    "add_card":            { "dp": 1 },
+    "delete_credential":   { "dp": 2 },
+    "modify_credential":   { "dp": 3 },
     "create_temp_password": { "dp": 51 },
     "delete_temp_password": { "dp": 52 },
     "modify_temp_password": { "dp": 53 },
-    "sync_credentials": { "dp": 54 },
+    "sync_credentials":    { "dp": 54 },
     "remote_unlock_config": { "dp": 73 }
   },
   "state_map": {
