@@ -242,68 +242,85 @@ class TuyaMobileAPIAsync:
         return None
 
 
-async def async_refresh_all_devices(
-    hass: HomeAssistant, entry, *, new_password: str | None = None,
-) -> int:
-    """Refresh cloud creds AND cloud DP snapshot for every device in the
-    hub's store. Single entry point shared by the reauth flow and the
-    `refresh_cloud_credentials` service.
-
-    Uses `new_password` if given (reauth case), else the password stored
-    in the hub entry. Returns the number of devices successfully updated.
-    The hub entry's password is updated only when `new_password` is
-    provided. Caller is responsible for reloading the entry afterwards.
-    """
+def _entry_creds(entry, *, new_password: str | None = None) -> tuple[str, str, str, str]:
     from .const import (
         CONF_TUYA_EMAIL, CONF_TUYA_PASSWORD,
         CONF_TUYA_COUNTRY, CONF_TUYA_REGION,
     )
-    from .device_store import DeviceStore
-
     email = entry.data.get(CONF_TUYA_EMAIL, "")
     password = new_password or entry.data.get(CONF_TUYA_PASSWORD, "")
     country = entry.data.get(CONF_TUYA_COUNTRY, "")
     region = entry.data.get(CONF_TUYA_REGION, "")
     if not (email and password):
         raise RuntimeError("Hub has no usable cloud credentials")
+    return email, password, country, region
 
+
+async def _refresh_one(
+    hass: HomeAssistant, device_store, mac: str, dev: dict,
+    email: str, password: str, country: str, region: str,
+) -> bool:
+    """Fetch cloud data for one device and write it back to the store.
+    Returns True on success, False on any failure (non-fatal)."""
+    try:
+        res = await async_fetch_auth_key(
+            hass, dev.get("uuid", "") or "",
+            email, password, country, region, device_mac=mac,
+        )
+    except Exception as exc:
+        _LOGGER.warning("Cloud refresh for %s failed: %s", mac, exc)
+        return False
+    updates = {
+        "local_key": res.get("local_key", "") or dev.get("local_key", ""),
+        "sec_key": res.get("sec_key", "") or dev.get("sec_key", ""),
+        "check_code": res.get("check_code", "") or dev.get("check_code", ""),
+        "auth_key": res.get("auth_key", "") or dev.get("auth_key", ""),
+    }
+    if updates["local_key"]:
+        updates["login_key"] = updates["local_key"][:6].encode().hex()
+    dev_id = res.get("device_id") or ""
+    if dev_id:
+        updates["virtual_id"] = (
+            (dev_id.encode() + b"\x00" * 22)[:22]
+        ).hex()
+    if res.get("dps"):
+        updates["cloud_dps"] = res["dps"]
+    await device_store.async_update_device(mac, **updates)
+    _LOGGER.info(
+        "Refreshed %s: local_key=%s sec_key=%s check_code=%s dps=%d",
+        mac,
+        "yes" if updates["local_key"] else "no",
+        "yes" if updates["sec_key"] else "no",
+        updates.get("check_code") or "(empty)",
+        len(res.get("dps") or {}),
+    )
+    return True
+
+
+async def async_refresh_all_devices(
+    hass: HomeAssistant, entry, *, new_password: str | None = None,
+) -> int:
+    """Refresh cloud creds + DP snapshot for every device in the hub store.
+
+    Used by the Reconfigure flow. If `new_password` is given the hub
+    entry's stored password is rewritten after a successful fetch.
+    Caller reloads the entry. Returns number of devices updated.
+    """
+    from .device_store import DeviceStore
+    from .const import (
+        CONF_TUYA_EMAIL, CONF_TUYA_PASSWORD,
+        CONF_TUYA_COUNTRY, CONF_TUYA_REGION,
+    )
+
+    email, password, country, region = _entry_creds(entry, new_password=new_password)
     device_store = DeviceStore(hass)
     await device_store.async_load()
     refreshed = 0
     for mac, dev in list(device_store.devices.items()):
-        try:
-            res = await async_fetch_auth_key(
-                hass, dev.get("uuid", "") or "",
-                email, password, country, region, device_mac=mac,
-            )
-        except Exception as exc:
-            _LOGGER.warning("Cloud refresh for %s failed: %s", mac, exc)
-            continue
-        updates = {
-            "local_key": res.get("local_key", "") or dev.get("local_key", ""),
-            "sec_key": res.get("sec_key", "") or dev.get("sec_key", ""),
-            "check_code": res.get("check_code", "") or dev.get("check_code", ""),
-            "auth_key": res.get("auth_key", "") or dev.get("auth_key", ""),
-        }
-        if updates["local_key"]:
-            updates["login_key"] = updates["local_key"][:6].encode().hex()
-        dev_id = res.get("device_id") or ""
-        if dev_id:
-            updates["virtual_id"] = (
-                (dev_id.encode() + b"\x00" * 22)[:22]
-            ).hex()
-        if res.get("dps"):
-            updates["cloud_dps"] = res["dps"]
-        await device_store.async_update_device(mac, **updates)
-        refreshed += 1
-        _LOGGER.info(
-            "Refreshed %s: local_key=%s sec_key=%s check_code=%s dps=%d",
-            mac,
-            "yes" if updates["local_key"] else "no",
-            "yes" if updates["sec_key"] else "no",
-            updates.get("check_code") or "(empty)",
-            len(res.get("dps") or {}),
-        )
+        if await _refresh_one(
+            hass, device_store, mac, dev, email, password, country, region,
+        ):
+            refreshed += 1
 
     if new_password and refreshed:
         hass.config_entries.async_update_entry(
@@ -316,6 +333,25 @@ async def async_refresh_all_devices(
             },
         )
     return refreshed
+
+
+async def async_refresh_one_device(
+    hass: HomeAssistant, entry, mac: str,
+) -> bool:
+    """Refresh cloud creds + DP snapshot for a single device. Used by the
+    per-lock 'Refresh via cloud' button. Caller reloads the entry.
+    """
+    from .device_store import DeviceStore
+
+    email, password, country, region = _entry_creds(entry)
+    device_store = DeviceStore(hass)
+    await device_store.async_load()
+    dev = device_store.get_device(mac)
+    if not dev:
+        raise RuntimeError(f"Device {mac} not in store")
+    return await _refresh_one(
+        hass, device_store, mac.upper(), dev, email, password, country, region,
+    )
 
 
 async def async_fetch_auth_key_only(

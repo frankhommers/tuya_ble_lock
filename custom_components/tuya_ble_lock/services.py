@@ -389,30 +389,9 @@ async def async_register_services(hass: HomeAssistant) -> None:
             })
         return {"credentials": result}
 
-    async def handle_refresh_cloud_credentials(call: ServiceCall) -> None:
-        """Re-login to Tuya cloud, refresh BLE keys AND pull the current DP
-        snapshot to seed entity state. Use after re-pairing a lock in the
-        Tuya app, or when sensors that only populate on events (doorbell,
-        hijack, last unlock) show as 'unknown' on first setup.
-        """
-        from .tuya_cloud import async_refresh_all_devices
-
-        entries = hass.config_entries.async_entries(DOMAIN)
-        if not entries:
-            raise HomeAssistantError("Tuya BLE Lock hub is not configured")
-        entry = entries[0]
-        try:
-            refreshed = await async_refresh_all_devices(hass, entry)
-        except RuntimeError as exc:
-            raise HomeAssistantError(str(exc)) from exc
-        _LOGGER.info("Cloud refresh complete: %d device(s) updated", refreshed)
-        if refreshed:
-            await hass.config_entries.async_reload(entry.entry_id)
-
     hass.services.async_register(DOMAIN, "add_pin", handle_add_pin, schema=ADD_PIN_SCHEMA)
     hass.services.async_register(DOMAIN, "add_fingerprint", handle_add_fingerprint, schema=ADD_FINGERPRINT_SCHEMA)
     hass.services.async_register(DOMAIN, "add_card", handle_add_card, schema=ADD_CARD_SCHEMA)
     hass.services.async_register(DOMAIN, "delete_credential", handle_delete_credential, schema=DELETE_CREDENTIAL_SCHEMA)
     hass.services.async_register(DOMAIN, "list_credentials", handle_list_credentials, schema=LIST_CREDENTIALS_SCHEMA, supports_response=SupportsResponse.OPTIONAL)
     hass.services.async_register(DOMAIN, "create_temp_password", handle_create_temp_password, schema=CREATE_TEMP_PASSWORD_SCHEMA)
-    hass.services.async_register(DOMAIN, "refresh_cloud_credentials", handle_refresh_cloud_credentials, schema=vol.Schema({}))
