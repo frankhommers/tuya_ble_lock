@@ -68,6 +68,7 @@ class TuyaBLELockSession:
         protocol_version: int = 4,
         local_key: bytes | None = None,
         sec_key: bytes | None = None,
+        check_code: str | None = None,
     ):
         self._hass = hass
         self._ble_device = ble_device
@@ -80,6 +81,7 @@ class TuyaBLELockSession:
         # are set, session uses sec_flags 14/15 instead of 4/5.
         self._local_key = local_key
         self._sec_key = sec_key
+        self._check_code = check_code or ""
         self._btsc = bool(local_key and sec_key)
         self._client: BleakClient | None = None
         self._seq = ble_protocol.SequenceCounter()
@@ -555,11 +557,42 @@ class TuyaBLELockSession:
         if not pair_ok:
             _LOGGER.debug("No explicit PAIR OK seen (may still be usable)")
 
-        # Note: volume safety check removed — DP 71 (ble_unlock_check) works even with mute.
-        # DP 46 (manual_lock) still requires volume=normal, but we no longer use it.
+        # Arm the lock's event-push mode. Without these two writes the K3
+        # only pushes motor_state + successful unlocks — alarm_lock
+        # (wrong_finger, wrong_password, pry, …), hijack and doorbell
+        # events stay silent. The Tuya app performs this exact sequence
+        # right after PAIR (verified via btsnoop decode + live repro).
+        if self._btsc:
+            await self._arm_event_push()
 
         _LOGGER.info("BLE session established with %s", self._ble_device.address)
         return True
+
+    async def _arm_event_push(self) -> None:
+        """Tell the lock we want live event push.
+
+        Two fire-and-forget writes, ~30 bytes each:
+          * DP 64 (Offline Code Time) = current unix timestamp as ASCII.
+          * DP 69 (Get Records)       = ffff 0001 [check_code] 00.
+        Enables wrong_finger / wrong_password / hijack / doorbell pushes
+        via cmd=0x8007 for the rest of the session. No battery cost
+        beyond the two extra writes.
+        """
+        try:
+            now_ts = str(int(time.time())).encode("ascii")
+            payload = ble_protocol.build_v4_dp(64, 3, now_ts)
+            await self._send_encrypted(CMD_DP_WRITE_V4, payload, self._session_sec)
+            await asyncio.sleep(0.3)
+
+            code_str = getattr(self, "_check_code", "") or ""
+            code = (code_str.encode("ascii") + b"\x00" * 8)[:8]
+            dp69_val = struct.pack(">HH", 0xFFFF, 1) + code + b"\x00"
+            payload = ble_protocol.build_v4_dp(69, 0, dp69_val)
+            await self._send_encrypted(CMD_DP_WRITE_V4, payload, self._session_sec)
+            await asyncio.sleep(0.3)
+            _LOGGER.debug("Event-push arm sent (DP64 + DP69)")
+        except Exception as exc:
+            _LOGGER.debug("Event-push arm failed: %s", exc)
 
     async def async_disconnect(self) -> None:
         if self._client:

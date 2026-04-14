@@ -196,6 +196,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             protocol_version=protocol_version,
             local_key=local_key_b,
             sec_key=sec_key_b,
+            check_code=dev_data.get("check_code", ""),
         )
 
         coordinator = TuyaBLELockCoordinator(
