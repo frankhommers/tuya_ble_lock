@@ -151,8 +151,12 @@ async def async_register_services(hass: HomeAssistant) -> None:
 
         store: CredentialStore = hass.data[DOMAIN]["credential_store"]
         member = store.get_member_by_name(member_name)
+        person_eid = call.data.get("person")
         if not member:
-            member = await store.async_add_member(member_name)
+            member = await store.async_add_member(member_name, person_entity_id=person_eid)
+        elif person_eid and getattr(member, "person_entity_id", None) != person_eid:
+            await store.async_update_member(member.member_id, person_entity_id=person_eid)
+            member = store.get_member(member.member_id)
 
         if not isinstance(device_ids, list):
             device_ids = [device_ids]
@@ -195,8 +199,12 @@ async def async_register_services(hass: HomeAssistant) -> None:
 
         store: CredentialStore = hass.data[DOMAIN]["credential_store"]
         member = store.get_member_by_name(member_name)
+        person_eid = call.data.get("person")
         if not member:
-            member = await store.async_add_member(member_name)
+            member = await store.async_add_member(member_name, person_entity_id=person_eid)
+        elif person_eid and getattr(member, "person_entity_id", None) != person_eid:
+            await store.async_update_member(member.member_id, person_entity_id=person_eid)
+            member = store.get_member(member.member_id)
 
         mac, coordinator = _get_coordinator(hass, device_id)
         dp_create = _get_service_dp(coordinator, "add_fingerprint")
@@ -244,8 +252,12 @@ async def async_register_services(hass: HomeAssistant) -> None:
 
         store: CredentialStore = hass.data[DOMAIN]["credential_store"]
         member = store.get_member_by_name(member_name)
+        person_eid = call.data.get("person")
         if not member:
-            member = await store.async_add_member(member_name)
+            member = await store.async_add_member(member_name, person_entity_id=person_eid)
+        elif person_eid and getattr(member, "person_entity_id", None) != person_eid:
+            await store.async_update_member(member.member_id, person_entity_id=person_eid)
+            member = store.get_member(member.member_id)
 
         mac, coordinator = _get_coordinator(hass, device_id)
         dp_create = _get_service_dp(coordinator, "add_card")

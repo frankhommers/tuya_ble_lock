@@ -185,11 +185,14 @@ class TuyaBLELastUnlockSensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
         attrs = {}
         user = self.coordinator.state.get("last_unlock_user")
         by = self.coordinator.state.get("last_unlock_by")
+        person = self.coordinator.state.get("last_unlock_person")
         ts = self.coordinator.state.get("last_unlock_time")
         if user is not None:
             attrs["user_id"] = user
         if by:
             attrs["by"] = by
+        if person:
+            attrs["person_entity_id"] = person
         if ts is not None:
             attrs["timestamp"] = ts
             from datetime import datetime, timezone
@@ -224,6 +227,17 @@ class TuyaBLELastUnlockBySensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
     @property
     def native_value(self) -> str | None:
         return self.coordinator.state.get("last_unlock_by")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        attrs = {}
+        person = self.coordinator.state.get("last_unlock_person")
+        user = self.coordinator.state.get("last_unlock_user")
+        if person:
+            attrs["person_entity_id"] = person
+        if user is not None:
+            attrs["user_id"] = user
+        return attrs
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

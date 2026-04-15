@@ -179,6 +179,7 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
                     # credential store (only works for credentials enrolled
                     # through HA — Tuya-app-enrolled ones stay as 'User <id>').
                     member_name: str | None = None
+                    person_eid: str | None = None
                     if cred_type is not None:
                         try:
                             runtime = self._entry.runtime_data
@@ -192,11 +193,13 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
                                 member = cred_store.get_member(cred.member_id)
                                 if member:
                                     member_name = member.name
+                                    person_eid = getattr(member, "person_entity_id", None)
                         except Exception as exc:
                             _LOGGER.debug("Member lookup failed: %s", exc)
                     self.state["last_unlock_by"] = (
                         member_name or f"User {user_id}"
                     )
+                    self.state["last_unlock_person"] = person_eid
                     changed = True
 
             # Alarm events carry the lock's timestamp too — expose it so the

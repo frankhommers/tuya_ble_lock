@@ -39,9 +39,16 @@ class CredentialStore:
                 return m
         return None
 
-    async def async_add_member(self, name: str, ha_user_id: Optional[str] = None) -> MemberRecord:
+    async def async_add_member(
+        self, name: str,
+        ha_user_id: Optional[str] = None,
+        person_entity_id: Optional[str] = None,
+    ) -> MemberRecord:
         member_id = self.next_member_id()
-        rec = MemberRecord(member_id=member_id, name=name, ha_user_id=ha_user_id, created_at=time.time())
+        rec = MemberRecord(
+            member_id=member_id, name=name, ha_user_id=ha_user_id,
+            created_at=time.time(), person_entity_id=person_entity_id,
+        )
         self._data["members"][str(member_id)] = rec.__dict__
         await self.async_save()
         return rec

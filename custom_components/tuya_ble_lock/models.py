@@ -27,6 +27,7 @@ class MemberRecord:
     name: str
     ha_user_id: Optional[str]
     created_at: float
+    person_entity_id: Optional[str] = None  # e.g. "person.frank"
 
 
 @dataclass
