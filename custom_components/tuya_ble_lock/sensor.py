@@ -89,8 +89,10 @@ _ALARM_LOCK_MAP = [
 
 
 class TuyaBLEAlarmSensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
-    _attr_name = "Lock alarm"
+    _attr_translation_key = "lock_alarm"
     _attr_icon = "mdi:alert-circle"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = _ALARM_LOCK_MAP
 
     @property
     def unique_id(self):
@@ -156,9 +158,18 @@ class TuyaBLEDoorSensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
         return "mdi:door"
 
 
+UNLOCK_METHOD_OPTIONS = [
+    "fingerprint", "password", "dynamic_code", "card",
+    "mechanical_key", "bluetooth", "temporary_code",
+    "remote_phone", "remote_voice", "offline_code",
+]
+
+
 class TuyaBLELastUnlockSensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
-    _attr_name = "Last unlock"
+    _attr_translation_key = "last_unlock"
     _attr_icon = "mdi:key-variant"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = UNLOCK_METHOD_OPTIONS
 
     @property
     def unique_id(self):

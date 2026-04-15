@@ -1,23 +1,44 @@
 {
   "config": {
     "step": {
+      "select_country": {
+        "title": "Select Country",
+        "description": "Choose your country to automatically configure the correct Tuya cloud region and country code."
+      },
       "cloud_login": {
         "title": "Tuya Cloud Credentials",
-        "description": "Enter your Tuya Smart or Smart Life app credentials. These are used to fetch encryption keys for your locks. All discovered locks will be added automatically.",
+        "description": "Enter your Tuya Smart or Smart Life app credentials. These are used once to fetch encryption keys for your locks.\n\nRegion: {country_name}",
         "data": {
           "email": "Email",
           "password": "Password",
-          "country_code": "Country code",
+          "country_code": "Country code (e.g. 31)",
           "region": "Cloud region"
         }
       },
       "confirm_new_device": {
         "title": "New Lock Found",
         "description": "A new Tuya BLE lock was found: {name} ({mac}). This lock needs BLE pairing. Please pair it via the Tuya app first, then it will be added automatically on next discovery."
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Tuya account",
+        "description": "Re-enter your Tuya password for {email}. This also refreshes the BLE keys for every stored lock — use this after re-pairing a lock in the Tuya app.",
+        "data": {
+          "password": "Password",
+          "tuya_country_code": "Country code",
+          "tuya_region": "Cloud region"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Tuya account",
+        "description": "Update your Tuya cloud credentials. Email is prefilled with the current value — change it if you moved to a different account. Refreshes BLE keys for every lock on the hub.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
       }
     },
     "error": {
-      "auth_key_failed": "Could not connect to Tuya cloud. Check your credentials, country code, and region."
+      "auth_key_failed": "Could not connect to Tuya cloud. Check your credentials, country, and region."
     },
     "abort": {
       "already_configured": "This lock is already configured.",
@@ -25,7 +46,8 @@
       "device_added": "Lock added successfully. It will appear shortly.",
       "missing_credentials": "Hub entry has no cloud credentials. Please reconfigure the integration.",
       "cloud_fetch_failed": "Could not fetch device info from Tuya cloud. The lock may not be paired to your Tuya app account.",
-      "pairing_not_implemented": "BLE pairing for unbound devices is not yet supported in auto-add mode. Please pair the lock via the Tuya app first."
+      "pairing_not_implemented": "BLE pairing for unbound devices is not yet supported in auto-add mode. Please pair the lock via the Tuya app first.",
+      "reauth_successful": "Re-authentication successful. BLE keys refreshed for all locks."
     }
   },
   "entity": {
@@ -35,10 +57,40 @@
     "sensor": {
       "battery": { "name": "Battery" },
       "battery_state": { "name": "Battery state" },
-      "uuid": { "name": "UUID" },
-      "login_key": { "name": "Login key" },
-      "virtual_id": { "name": "Virtual ID" },
-      "auth_key": { "name": "Auth key" }
+      "last_unlock": {
+        "name": "Last unlock",
+        "state": {
+          "fingerprint": "Fingerprint",
+          "password": "PIN code",
+          "dynamic_code": "Dynamic code",
+          "card": "NFC card",
+          "mechanical_key": "Mechanical key",
+          "bluetooth": "Bluetooth",
+          "temporary_code": "Temporary code",
+          "remote_phone": "Remote (phone)",
+          "remote_voice": "Remote (voice)",
+          "offline_code": "Offline code"
+        }
+      },
+      "lock_alarm": {
+        "name": "Lock alarm",
+        "state": {
+          "wrong_finger": "Wrong fingerprint",
+          "wrong_password": "Wrong PIN",
+          "wrong_card": "Wrong card",
+          "wrong_face": "Wrong face",
+          "tongue_bad": "Bolt jammed",
+          "too_hot": "Overheated",
+          "unclosed_time": "Left open too long",
+          "tongue_not_out": "Bolt not extended",
+          "pry": "Pry attempt",
+          "key_in": "Key in lock",
+          "low_battery": "Low battery",
+          "power_off": "Power off",
+          "shock": "Shock detected",
+          "defense": "Defense mode"
+        }
+      }
     },
     "switch": {
       "auto_lock": { "name": "Auto-lock" },
@@ -52,7 +104,13 @@
       "auto_lock_time": { "name": "Auto-lock delay" }
     },
     "button": {
-      "refresh": { "name": "Refresh status" }
+      "refresh": { "name": "Refresh status locally" },
+      "cloud_refresh": { "name": "Refresh status via cloud" }
+    },
+    "binary_sensor": {
+      "doorbell": { "name": "Doorbell" },
+      "hijack": { "name": "Hijack alarm" },
+      "message": { "name": "Message" }
     }
   }
 }

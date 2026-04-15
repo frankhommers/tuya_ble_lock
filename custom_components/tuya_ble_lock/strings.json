@@ -56,7 +56,41 @@
     },
     "sensor": {
       "battery": { "name": "Battery" },
-      "battery_state": { "name": "Battery state" }
+      "battery_state": { "name": "Battery state" },
+      "last_unlock": {
+        "name": "Last unlock",
+        "state": {
+          "fingerprint": "Fingerprint",
+          "password": "PIN code",
+          "dynamic_code": "Dynamic code",
+          "card": "NFC card",
+          "mechanical_key": "Mechanical key",
+          "bluetooth": "Bluetooth",
+          "temporary_code": "Temporary code",
+          "remote_phone": "Remote (phone)",
+          "remote_voice": "Remote (voice)",
+          "offline_code": "Offline code"
+        }
+      },
+      "lock_alarm": {
+        "name": "Lock alarm",
+        "state": {
+          "wrong_finger": "Wrong fingerprint",
+          "wrong_password": "Wrong PIN",
+          "wrong_card": "Wrong card",
+          "wrong_face": "Wrong face",
+          "tongue_bad": "Bolt jammed",
+          "too_hot": "Overheated",
+          "unclosed_time": "Left open too long",
+          "tongue_not_out": "Bolt not extended",
+          "pry": "Pry attempt",
+          "key_in": "Key in lock",
+          "low_battery": "Low battery",
+          "power_off": "Power off",
+          "shock": "Shock detected",
+          "defense": "Defense mode"
+        }
+      }
     },
     "switch": {
       "auto_lock": { "name": "Auto-lock" },
