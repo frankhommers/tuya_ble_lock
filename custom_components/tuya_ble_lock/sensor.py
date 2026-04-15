@@ -108,7 +108,17 @@ class TuyaBLEAlarmSensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
     @property
     def extra_state_attributes(self) -> dict:
         alarm = self.coordinator.state.get("alarm_lock")
-        return {"raw_value": alarm} if alarm else {}
+        if not alarm:
+            return {}
+        attrs = {"raw_value": alarm}
+        ts = self.coordinator.state.get("last_alarm_time")
+        if ts:
+            attrs["timestamp"] = ts
+            from datetime import datetime, timezone
+            attrs["timestamp_local"] = datetime.fromtimestamp(
+                ts, tz=timezone.utc
+            ).astimezone().isoformat()
+        return attrs
 
 
 _DOOR_STATE_MAP = {
@@ -167,6 +177,10 @@ class TuyaBLELastUnlockSensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
             attrs["user_id"] = user
         if ts is not None:
             attrs["timestamp"] = ts
+            from datetime import datetime, timezone
+            attrs["timestamp_local"] = datetime.fromtimestamp(
+                ts, tz=timezone.utc
+            ).astimezone().isoformat()
         return attrs
 
     async def async_added_to_hass(self) -> None:

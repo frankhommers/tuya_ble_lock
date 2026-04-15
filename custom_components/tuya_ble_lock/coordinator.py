@@ -155,6 +155,9 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
         for dp in dps:
             dp_id = dp["id"]
             dp_id_str = str(dp_id)
+            # cmd=0x8007 event records carry the lock's own timestamp in
+            # `event_ts`; cmd=0x8006 snapshots don't, so fall back to now.
+            event_ts = dp.get("event_ts") or int(time.time())
 
             # Track last unlock source (any unlock-method DP with non-zero user id)
             if dp_id in self._UNLOCK_METHOD_DPS:
@@ -163,8 +166,14 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
                 if user_id:
                     self.state["last_unlock_method"] = self._UNLOCK_METHOD_DPS[dp_id]
                     self.state["last_unlock_user"] = user_id
-                    self.state["last_unlock_time"] = time.time()
+                    self.state["last_unlock_time"] = event_ts
                     changed = True
+
+            # Alarm events carry the lock's timestamp too — expose it so the
+            # Lock-alarm sensor attributes show when it actually happened.
+            if dp_id == 21:  # alarm_lock
+                self.state["last_alarm_time"] = event_ts
+                changed = True
 
             mapping = state_map.get(dp_id_str)
             if not mapping:
