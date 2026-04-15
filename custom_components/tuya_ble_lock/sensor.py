@@ -35,6 +35,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             (m.get("key") or "").startswith("unlock_") for m in state_map.values()
         ):
             entities.append(TuyaBLELastUnlockSensor(coordinator, entry))
+            entities.append(TuyaBLELastUnlockBySensor(coordinator, entry))
     if entities:
         async_add_entities(entities)
 
@@ -183,9 +184,12 @@ class TuyaBLELastUnlockSensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
     def extra_state_attributes(self) -> dict:
         attrs = {}
         user = self.coordinator.state.get("last_unlock_user")
+        by = self.coordinator.state.get("last_unlock_by")
         ts = self.coordinator.state.get("last_unlock_time")
         if user is not None:
             attrs["user_id"] = user
+        if by:
+            attrs["by"] = by
         if ts is not None:
             attrs["timestamp"] = ts
             from datetime import datetime, timezone
@@ -202,3 +206,28 @@ class TuyaBLELastUnlockSensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
                 self.coordinator.state["last_unlock_method"] = last.state
 
 
+
+
+class TuyaBLELastUnlockBySensor(TuyaBLELockEntity, SensorEntity, RestoreEntity):
+    """Resolves the last unlocker's hardware user id to the HA member name.
+
+    Falls back to 'User <id>' when the credential wasn't enrolled through
+    HA (e.g. added directly via the Tuya app or the keypad).
+    """
+    _attr_translation_key = "last_unlock_by"
+    _attr_icon = "mdi:account-key"
+
+    @property
+    def unique_id(self):
+        return f"{self._mac}_last_unlock_by"
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator.state.get("last_unlock_by")
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self.coordinator.state.get("last_unlock_by") is None:
+            last = await self.async_get_last_state()
+            if last and last.state not in (None, "unknown", "unavailable"):
+                self.coordinator.state["last_unlock_by"] = last.state

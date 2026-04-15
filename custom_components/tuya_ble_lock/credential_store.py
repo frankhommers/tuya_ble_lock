@@ -78,6 +78,21 @@ class CredentialStore:
     def get_credentials_for_member(self, member_id: int) -> List[CredentialRecord]:
         return [CredentialRecord(**c) for c in self._data["credentials"].values() if c["member_id"] == member_id]
 
+    def find_credential(self, lock_entry_id: str, cred_type: int, hw_id: int) -> Optional[CredentialRecord]:
+        """Look up a credential by lock + credential type + hardware id.
+
+        Used to resolve an incoming unlock event ('user 3 used a
+        fingerprint') back to the HA member that owns that credential.
+        """
+        for c in self._data["credentials"].values():
+            if (
+                c["lock_entry_id"] == lock_entry_id
+                and c["cred_type"] == cred_type
+                and c["hw_id"] == hw_id
+            ):
+                return CredentialRecord(**c)
+        return None
+
     async def async_add_credential(self, member_id, lock_entry_id, cred_type, hw_id, name) -> CredentialRecord:
         cid = str(uuid.uuid4())
         rec = CredentialRecord(

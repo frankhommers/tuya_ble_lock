@@ -91,13 +91,20 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
     def profile(self) -> dict:
         return self._profile
 
-    # DP id → last_unlock method label. Any DP here that receives a non-zero
-    # user id updates self.state['last_unlock_method'] and 'last_unlock_user'.
-    _UNLOCK_METHOD_DPS = {
-        12: "fingerprint", 13: "password", 14: "dynamic_code",
-        15: "card", 16: "mechanical_key", 19: "bluetooth",
-        55: "temporary_code", 62: "remote_phone", 63: "remote_voice",
-        67: "offline_code",
+    # DP id → (last_unlock label, CredentialStore cred_type for lookup).
+    # cred_type matches the CRED_* constants in const.py — we use it to map
+    # the hardware user id back to the HA member who enrolled that slot.
+    _UNLOCK_METHOD_DPS: dict[int, tuple[str, int | None]] = {
+        12: ("fingerprint", 0x03),      # CRED_FINGERPRINT
+        13: ("password", 0x01),          # CRED_PASSWORD
+        14: ("dynamic_code", None),
+        15: ("card", 0x02),              # CRED_CARD
+        16: ("mechanical_key", None),
+        19: ("bluetooth", None),
+        55: ("temporary_code", None),
+        62: ("remote_phone", None),
+        63: ("remote_voice", None),
+        67: ("offline_code", None),
     }
 
     def apply_cloud_dps(self, cloud_dps: dict) -> None:
@@ -164,9 +171,32 @@ class TuyaBLELockCoordinator(DataUpdateCoordinator):
                 raw = dp["raw"]
                 user_id = int.from_bytes(raw, "big") if raw else 0
                 if user_id:
-                    self.state["last_unlock_method"] = self._UNLOCK_METHOD_DPS[dp_id]
+                    method_label, cred_type = self._UNLOCK_METHOD_DPS[dp_id]
+                    self.state["last_unlock_method"] = method_label
                     self.state["last_unlock_user"] = user_id
                     self.state["last_unlock_time"] = event_ts
+                    # Resolve hardware user_id → HA member name via the
+                    # credential store (only works for credentials enrolled
+                    # through HA — Tuya-app-enrolled ones stay as 'User <id>').
+                    member_name: str | None = None
+                    if cred_type is not None:
+                        try:
+                            runtime = self._entry.runtime_data
+                            cred_store = runtime.credential_store
+                            cred = cred_store.find_credential(
+                                lock_entry_id=self._mac,
+                                cred_type=cred_type,
+                                hw_id=user_id,
+                            )
+                            if cred:
+                                member = cred_store.get_member(cred.member_id)
+                                if member:
+                                    member_name = member.name
+                        except Exception as exc:
+                            _LOGGER.debug("Member lookup failed: %s", exc)
+                    self.state["last_unlock_by"] = (
+                        member_name or f"User {user_id}"
+                    )
                     changed = True
 
             # Alarm events carry the lock's timestamp too — expose it so the

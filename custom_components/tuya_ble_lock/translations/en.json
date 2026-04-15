@@ -57,6 +57,7 @@
     "sensor": {
       "battery": { "name": "Battery" },
       "battery_state": { "name": "Battery state" },
+      "last_unlock_by": { "name": "Last unlock by" },
       "last_unlock": {
         "name": "Last unlock",
         "state": {
